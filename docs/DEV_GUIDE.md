@@ -61,6 +61,34 @@ Phase 1 baseline has been verified; checkboxes are marked to reflect the current
 - [x] README updated if behavior changed
 - [x] DEV_GUIDE / CONTRIBUTING updated if workflow changed
 
+### Scope + Safety
+- [ ] Restate scope: what changes and what does not
+- [ ] Confirm policy supremacy is unchanged
+- [ ] Confirm segmentation (System vs Productivity) is preserved
+- [ ] Confirm no raw shell / no generic exec wrappers were added
+
+### Schemas + Interfaces
+- [ ] Planner outputs Plan Schema exactly
+- [ ] Policy outputs Approval Schema exactly
+- [ ] Context Schema respected (privacy flags)
+- [ ] Plugins implement required interface
+- [ ] Plugin execution requires valid approval token/signature
+
+### Logging + Privacy
+- [ ] Audit logs generated for each request
+- [ ] Secrets redacted (no tokens/passwords)
+- [ ] Screenshot capture is explicit-only and logged
+
+### Testing + Quality
+- [ ] Unit tests updated/added
+- [ ] Integration tests updated/added
+- [ ] Security tests included for edge cases
+- [ ] Regression test added for any bug fix
+
+### Documentation
+- [ ] README updated if behavior changed
+- [ ] DEV_GUIDE / CONTRIBUTING updated if workflow changed
+
 ## Codex Task Template
 Copy/paste and fill this template for every task:
 

@@ -25,3 +25,12 @@ Phase 1 scaffolding satisfies the checklist; items are checked to reflect the cu
 - [x] Audit logging and redaction intact; screenshot capture explicit-only
 - [x] Tests added/updated (unit, integration, security, regression)
 - [x] Relevant docs updated (README, DEV_GUIDE, CONTRIBUTING, POLICY)
+
+- [ ] Scope restated; confirm what changes and what does not
+- [ ] Policy supremacy unchanged; segmentation between System and Productivity intact
+- [ ] No raw shell or generic exec wrappers introduced
+- [ ] Plan/Approval/Context schemas preserved
+- [ ] Plugins enforce approval tokens and validate inputs
+- [ ] Audit logging and redaction intact; screenshot capture explicit-only
+- [ ] Tests added/updated (unit, integration, security, regression)
+- [ ] Relevant docs updated (README, DEV_GUIDE, CONTRIBUTING, POLICY)
