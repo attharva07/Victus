@@ -72,3 +72,8 @@ Tests will cover policy allow/deny logic, plan schema validation, plugin argumen
 ## Execution Flow Diagram (Concise)
 - Input → Plan → Policy → Approval → Execute → Audit
 - Any failure halts execution; system fails closed.
+
+## Documentation
+- Developer workflow, schemas, and guardrails: [`docs/DEV_GUIDE.md`](docs/DEV_GUIDE.md)
+- Contribution rules and review checklist: [`CONTRIBUTING.md`](CONTRIBUTING.md)
+- Policy invariants and gate rules: [`docs/POLICY.md`](docs/POLICY.md)
