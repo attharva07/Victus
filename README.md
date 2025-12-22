@@ -41,6 +41,7 @@ Failure at any stage stops the flow and returns a safe error.
   - Policy now enforces domain segmentation: system-only plans cannot call productivity tools and vice versa unless the plan is explicitly `mixed`.
   - Phase 2 checklists in `docs/DEV_GUIDE.md` and `CONTRIBUTING.md` are actively maintained to reflect completed validations and tests.
 
+
 ## Safety Invariants (Non-Negotiable)
 - No admin/debug bypasses, hidden overrides, or generic shell execution.
 - Plugins never execute without a valid `policy_signature`.
