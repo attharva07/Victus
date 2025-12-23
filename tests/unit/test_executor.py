@@ -176,3 +176,4 @@ def test_executor_rejects_raw_payload_after_redacted_approval():
 
     with pytest.raises(ExecutionError):
         app.executor.execute(raw_plan, approval)
+

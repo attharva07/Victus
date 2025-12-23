@@ -70,6 +70,14 @@ class VictusApp:
         self.audit.log_request(
             user_input=user_input,
             plan=prepared_plan,
+
+        plan = self._mark_openai_outbound(plan)
+        redacted_plan = self._redact_openai_steps(plan)
+        approval = self.request_approval(redacted_plan, routed.context)
+        results = self.execute_plan(redacted_plan, approval)
+        self.audit.log_request(
+            user_input=user_input,
+            plan=redacted_plan,
             approval=approval,
             results=results,
             errors=None,
