@@ -8,6 +8,7 @@ Approval -> Execute -> Audit. Real interfaces (UI/voice/hotkey) will call into
 `VictusApp.run_request` in later phases.
 """
 
+from dataclasses import replace
 from typing import Dict, Sequence
 
 from .core.approval import issue_approval
@@ -44,6 +45,9 @@ class VictusApp:
 
         return sanitize_plan(plan)
 
+        marked_plan = self._mark_openai_outbound(plan)
+        return self._redact_openai_steps(marked_plan)
+
     def request_approval(self, plan: Plan, context: Context) -> tuple[Plan, Approval]:
         """Prepare and submit a plan for approval, returning the redacted copy."""
 
@@ -69,8 +73,48 @@ class VictusApp:
         self.audit.log_request(
             user_input=user_input,
             plan=prepared_plan,
+
+        self.audit.log_request(
+            user_input=user_input,
+            plan=prepared_plan,
+
+        plan = self._mark_openai_outbound(plan)
+        redacted_plan = self._redact_openai_steps(plan)
+        approval = self.request_approval(redacted_plan, routed.context)
+        results = self.execute_plan(redacted_plan, approval)
+        self.audit.log_request(
+            user_input=user_input,
+            plan=redacted_plan,
             approval=approval,
             results=results,
             errors=None,
         )
         return results
+
+    @staticmethod
+    def _mark_openai_outbound(plan: Plan) -> Plan:
+        if any(step.tool == "openai" for step in plan.steps):
+            plan.data_outbound.to_openai = True
+        return plan
+
+    @staticmethod
+    def _redact_value(key: str, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        if key == "to":
+            return "redacted@example.com"
+        return "[REDACTED]"
+
+    def _redact_openai_steps(self, plan: Plan) -> Plan:
+        if not plan.data_outbound.redaction_required:
+            return plan
+
+        redacted_steps = []
+        for step in plan.steps:
+            if step.tool != "openai":
+                redacted_steps.append(step)
+                continue
+            redacted_args = {key: self._redact_value(key, value) for key, value in step.args.items()}
+            redacted_steps.append(replace(step, args=redacted_args))
+
+        return replace(plan, steps=redacted_steps)

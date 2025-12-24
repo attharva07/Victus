@@ -13,6 +13,7 @@ from victus.core.schemas import (
     PrivacySettings,
 )
 from victus.domains.productivity.plugins.openai_client import OpenAIClientPlugin
+
 from victus.domains.system.system_plugin import SystemPlugin
 
 
@@ -220,3 +221,4 @@ def test_audit_always_stores_sanitized_plan():
     assert logged_args["prompt"] == "[REDACTED]"
     assert logged_args["to"] == "redacted@example.com"
     assert "secret" not in str(record.plan)
+
