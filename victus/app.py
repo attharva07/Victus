@@ -17,6 +17,7 @@ from .core.executor import ExecutionEngine
 from .core.planner import Planner
 from .core.policy import PolicyEngine
 from .core.router import Router
+from .core.sanitization import sanitize_plan
 from .core.schemas import Approval, Context, Plan, PlanStep
 from .domains.base import BasePlugin
 
@@ -41,6 +42,8 @@ class VictusApp:
 
     def prepare_plan_for_policy(self, plan: Plan) -> Plan:
         """Mark outbound flows and redact sensitive arguments before policy review."""
+
+        return sanitize_plan(plan)
 
         marked_plan = self._mark_openai_outbound(plan)
         return self._redact_openai_steps(marked_plan)
@@ -67,6 +70,10 @@ class VictusApp:
         plan = self.build_plan(goal=user_input, domain=domain, steps=steps)
         prepared_plan, approval = self.request_approval(plan, routed.context)
         results = self.execute_plan(prepared_plan, approval)
+        self.audit.log_request(
+            user_input=user_input,
+            plan=prepared_plan,
+
         self.audit.log_request(
             user_input=user_input,
             plan=prepared_plan,

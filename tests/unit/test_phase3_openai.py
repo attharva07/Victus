@@ -143,4 +143,6 @@ def test_audit_logs_redact_openai_prompts(openai_allowlist):
     logged = app.audit.records[-1]
     serialized_plan = str(logged.plan)
 
+    assert logged.plan.steps[0].args["prompt"] == "[REDACTED]"
+
     assert "token-xyz" not in serialized_plan

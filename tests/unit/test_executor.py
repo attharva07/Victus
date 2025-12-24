@@ -12,6 +12,8 @@ from victus.core.schemas import (
     PlanStep,
     PrivacySettings,
 )
+from victus.domains.productivity.plugins.openai_client import OpenAIClientPlugin
+
 from victus.domains.system.system_plugin import SystemPlugin
 
 
@@ -176,4 +178,47 @@ def test_executor_rejects_raw_payload_after_redacted_approval():
 
     with pytest.raises(ExecutionError):
         app.executor.execute(raw_plan, approval)
+
+
+class RecordingOpenAIPlugin(OpenAIClientPlugin):
+    def __init__(self) -> None:
+        super().__init__()
+        self.seen_args = []
+
+    def execute(self, action, args, approval):
+        self.seen_args.append(args)
+        return super().execute(action, args, approval)
+
+
+def test_executor_only_runs_sanitized_plan_payload():
+    plugin = RecordingOpenAIPlugin()
+    app = VictusApp(plugins={"openai": plugin})
+    raw_plan = build_openai_plan()
+    context = build_openai_context()
+
+    sanitized_plan, approval = app.request_approval(raw_plan, context)
+    app.executor.execute(sanitized_plan, approval)
+
+    assert plugin.seen_args, "plugin should capture executed args"
+    assert all("secret" not in str(args.get("prompt", "")) for args in plugin.seen_args)
+
+
+def test_audit_always_stores_sanitized_plan():
+    app = VictusApp(plugins={})
+    raw_plan = build_openai_plan()
+    context = build_openai_context()
+    _, approval = app.request_approval(raw_plan, context)
+
+    record = app.audit.log_request(
+        user_input="test",
+        plan=raw_plan,
+        approval=approval,
+        results={"step-1": {"status": "ok"}},
+        errors=None,
+    )
+
+    logged_args = record.plan.steps[0].args
+    assert logged_args["prompt"] == "[REDACTED]"
+    assert logged_args["to"] == "redacted@example.com"
+    assert "secret" not in str(record.plan)
 
