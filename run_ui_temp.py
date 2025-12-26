@@ -1,10 +1,9 @@
-"""Temporary dev harness for Phase 4 hotkey + popup UI.
+"""Temporary Phase 4 popup runner for text-only UI checks.
 
-Running this script starts a Qt application that listens for the
-Windows global hotkey Win+Alt+V. Pressing the hotkey toggles a minimal
-Victus popup window for text input/output. The popup routes all
-requests through VictusApp.run_request and never bypasses policy or
-executor layers.
+Launch this script locally to open the Victus popup immediately. No
+hotkeys, tray icons, or background listeners are used. All requests flow
+through ``VictusApp.run_request`` to preserve policy and executor
+coverage.
 """
 
 from __future__ import annotations
@@ -25,22 +24,23 @@ from victus.domains.productivity.allowlisted_plugins import (
     SpotifyPlugin,
 )
 from victus.domains.system.system_plugin import SystemPlugin
-from victus.ui.hotkey import GlobalHotkeyManager
 from victus.ui.popup_window import PopupWindow
 
 
-class HotkeyPopupController:
-    """Runs a popup UI that toggles via a global hotkey."""
+class PopupController:
+    """Runs the popup window directly for local testing."""
 
     def __init__(self) -> None:
         self.qt_app = QApplication.instance() or QApplication(sys.argv)
 
         self.victus = self._build_victus_app()
         self.popup = PopupWindow(self._handle_submit)
-        self.hotkey = GlobalHotkeyManager(self.toggle_popup)
-        self.last_position = None
+        self._show_popup()
 
-        self.qt_app.aboutToQuit.connect(self._cleanup)
+    def _show_popup(self) -> None:
+        self.popup.show()
+        self.popup.raise_()
+        self.popup.activateWindow()
 
     def _build_victus_app(self) -> VictusApp:
         plugins = {
@@ -52,26 +52,9 @@ class HotkeyPopupController:
         }
         return VictusApp(plugins)
 
-    def toggle_popup(self) -> None:
-        if self.popup.isVisible():
-            self.hide_popup()
-        else:
-            self.show_popup()
-
-    def show_popup(self) -> None:
-        if self.last_position:
-            self.popup.move(self.last_position)
-        self.popup.show()
-        self.popup.raise_()
-        self.popup.activateWindow()
-
-    def hide_popup(self) -> None:
-        self.last_position = self.popup.pos()
-        self.popup.hide()
-
     def _build_context(self) -> Context:
         return Context(
-            session_id="hotkey-session",
+            session_id="ui-temp-session",
             timestamp=datetime.utcnow(),
             mode="dev",
             foreground_app=None,
@@ -120,17 +103,12 @@ class HotkeyPopupController:
             return str(first)
         return str(first)
 
-    def _cleanup(self) -> None:
-        self.hotkey.unregister()
-
     def exec(self) -> int:
-        code = self.qt_app.exec()
-        self._cleanup()
-        return code
+        return self.qt_app.exec()
 
 
 def main() -> None:
-    controller = HotkeyPopupController()
+    controller = PopupController()
     sys.exit(controller.exec())
 
 

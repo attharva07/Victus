@@ -1,1 +1,1 @@
-"""UI package for the Victus desktop tray experience."""
+"""UI components for the Victus desktop popup experience."""
