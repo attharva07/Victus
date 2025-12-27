@@ -6,9 +6,10 @@ from openai import OpenAI
 
 from ....config.runtime import get_openai_api_key, require_openai_api_key
 from ....core.schemas import ExecutionError
+from .llm_base import LLMClientBase
 
 
-class OpenAIClientReal:
+class OpenAIClientReal(LLMClientBase):
     """Real OpenAI client that mirrors the stub output format."""
 
     def __init__(self, api_key: str | None = None) -> None:

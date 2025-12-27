@@ -4,11 +4,17 @@ import sys
 from typing import Any, Dict, List, Optional
 
 from ...base import BasePlugin
-from ....config.runtime import is_openai_configured
+from ....config.runtime import (
+    get_llm_provider,
+    get_ollama_base_url,
+    get_ollama_model,
+    is_openai_configured,
+)
 from ....core.schemas import Approval, ExecutionError
+from .llm_base import LLMClientBase
 
 
-class OpenAIClientStub:
+class OpenAIClientStub(LLMClientBase):
     def generate_text(self, *, prompt: str) -> Dict[str, str]:
         return {"action": "generate_text", "content": f"draft: {prompt}"}
 
@@ -25,7 +31,7 @@ class OpenAIClientStub:
 class OpenAIClientPlugin(BasePlugin):
     """Stub OpenAI client that drafts or summarizes text when approved."""
 
-    def __init__(self, client: Optional[Any] = None) -> None:
+    def __init__(self, client: Optional[LLMClientBase] = None) -> None:
         if client is not None:
             self.client = client
             return
@@ -34,16 +40,28 @@ class OpenAIClientPlugin(BasePlugin):
             self.client = OpenAIClientStub()
             return
 
-        if is_openai_configured():
+        provider = get_llm_provider()
+        if provider == "ollama":
+            from .ollama_client import OllamaClient
+
+            self.client = OllamaClient(
+                base_url=get_ollama_base_url(),
+                model=get_ollama_model(),
+            )
+        elif provider == "openai":
+            if not is_openai_configured():
+                raise ExecutionError(
+                    "OPENAI_API_KEY is required when LLM provider is set to 'openai'."
+                )
             from .openai_real_client import OpenAIClientReal
 
             self.client = OpenAIClientReal()
         else:
-            raise ExecutionError("OPENAI_API_KEY is required to use the OpenAI client.")
+            raise ExecutionError(f"Unsupported LLM provider '{provider}'.")
 
     def capabilities(self) -> Dict[str, Dict[str, Any]]:
         return {
-            "generate_text": {"description": "Draft text using OpenAI"},
+            "generate_text": {"description": "Draft text using an LLM provider"},
             "draft_email": {"description": "Draft an email body"},
             "summarize": {"description": "Summarize provided text"},
             "outline": {"description": "Create a structured outline"},
@@ -91,3 +109,6 @@ class OpenAIClientPlugin(BasePlugin):
     @staticmethod
     def _running_tests() -> bool:
         return "pytest" in sys.modules
+
+
+LLMClientPlugin = OpenAIClientPlugin
