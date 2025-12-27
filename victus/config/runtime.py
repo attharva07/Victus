@@ -32,3 +32,22 @@ def require_openai_api_key() -> str:
         raise ExecutionError("OPENAI_API_KEY is required to use the OpenAI client.")
 
     return key
+
+
+def get_llm_provider() -> str:
+    """Return the configured LLM provider name (default: ollama)."""
+
+    provider = os.getenv("LLM_PROVIDER", "ollama")
+    return provider.strip().lower()
+
+
+def get_ollama_base_url() -> str:
+    """Return the Ollama base URL (default: http://localhost:11434)."""
+
+    return os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").strip()
+
+
+def get_ollama_model() -> str:
+    """Return the Ollama model name (default: llama3.1:8b)."""
+
+    return os.getenv("OLLAMA_MODEL", "llama3.1:8b").strip()
