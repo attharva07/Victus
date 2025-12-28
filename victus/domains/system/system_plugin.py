@@ -28,10 +28,12 @@ class SystemPlugin(BasePlugin):
 
     def capabilities(self) -> Dict[str, Dict[str, Any]]:
         return {
+            "status": {},
             "open_app": {"app": list(self.allowed_apps)},
             "net_snapshot": {"detail": list(self._net_details)},
             "net_connections": {},
             "exposure_snapshot": {},
+            "bt_status": {},
             "local_devices": {},
             "access_overview": {},
         }
@@ -41,7 +43,7 @@ class SystemPlugin(BasePlugin):
             self._validate_open_app(args)
         elif action == "net_snapshot":
             self._validate_net_snapshot(args)
-        elif action in {"net_connections", "exposure_snapshot", "local_devices", "access_overview"}:
+        elif action in {"status", "net_connections", "exposure_snapshot", "bt_status", "local_devices", "access_overview"}:
             return
         else:
             raise ExecutionError("Unknown system action requested")
@@ -49,6 +51,8 @@ class SystemPlugin(BasePlugin):
     def execute(self, action: str, args: Dict[str, Any], approval: Approval) -> Dict[str, Any]:
         if not approval.policy_signature:
             raise ExecutionError("Missing policy signature")
+        if action == "status":
+            return self._status_snapshot()
         if action == "open_app":
             return {"action": action, "opened": args.get("app")}
         if action == "net_snapshot":
@@ -59,6 +63,8 @@ class SystemPlugin(BasePlugin):
             return self._net_connections()
         if action == "exposure_snapshot":
             return self._exposure_snapshot()
+        if action == "bt_status":
+            return self._bluetooth_status()
         if action == "local_devices":
             return self._local_devices()
         if action == "access_overview":
@@ -74,6 +80,21 @@ class SystemPlugin(BasePlugin):
         detail = args.get("detail", "summary")
         if detail not in self._net_details:
             raise ExecutionError("net_snapshot detail must be 'summary' or 'interfaces'")
+
+    def _status_snapshot(self) -> Dict[str, Any]:
+        notes: List[str] = []
+        data: Dict[str, Any] = {"cpu_percent": None, "memory_percent": None, "disk_percent": None}
+        if psutil is None:
+            notes.append("psutil not available; returning placeholder metrics")
+        else:
+            try:
+                data["cpu_percent"] = psutil.cpu_percent(interval=0)
+                data["memory_percent"] = psutil.virtual_memory().percent
+                data["disk_percent"] = psutil.disk_usage("/").percent
+            except Exception as exc:  # pragma: no cover - unexpected platform errors
+                notes.append(f"Failed to collect system metrics: {exc}")
+
+        return {"ok": True, "action": "status", "data": data, "notes": notes}
 
     def _net_connections(self) -> Dict[str, Any]:
         ps = self._require_psutil()
@@ -138,6 +159,15 @@ class SystemPlugin(BasePlugin):
             "action": "exposure_snapshot",
             "data": {"listening": services, "rdp_enabled": rdp_enabled},
             "notes": notes,
+        }
+
+    @staticmethod
+    def _bluetooth_status() -> Dict[str, Any]:
+        return {
+            "ok": True,
+            "action": "bt_status",
+            "data": {"adapter_present": False, "connected_devices": []},
+            "notes": ["Bluetooth inspection not available without platform APIs"],
         }
 
     def _local_devices(self) -> Dict[str, Any]:

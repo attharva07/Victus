@@ -14,6 +14,7 @@ from typing import Callable, Dict, Sequence
 from .core.approval import issue_approval
 from .core.audit import AuditLogger
 from .core.executor import ExecutionEngine
+from .core.intent_router import route_intent
 from .core.planner import Planner
 from .core.policy import PolicyEngine
 from .core.router import Router
@@ -82,7 +83,16 @@ class VictusApp:
         """
 
         routed = self.router.route(user_input, context)
-        plan = self.build_plan(goal=user_input, domain=domain, steps=steps)
+        routed_action = route_intent(user_input)
+        if routed_action:
+            plan = Plan(
+                goal=user_input,
+                domain="system",
+                steps=[PlanStep(id="step-1", tool="system", action=routed_action.action, args=routed_action.args)],
+                risk="low",
+            )
+        else:
+            plan = self.build_plan(goal=user_input, domain=domain, steps=steps)
         prepared_plan, approval = self.request_approval(plan, routed.context)
         results = self.execute_plan(prepared_plan, approval)
         self.audit.log_request(
@@ -112,7 +122,16 @@ class VictusApp:
         """
 
         routed = self.router.route(user_input, context)
-        plan = self.build_plan(goal=user_input, domain=domain, steps=steps)
+        routed_action = route_intent(user_input)
+        if routed_action:
+            plan = Plan(
+                goal=user_input,
+                domain="system",
+                steps=[PlanStep(id="step-1", tool="system", action=routed_action.action, args=routed_action.args)],
+                risk="low",
+            )
+        else:
+            plan = self.build_plan(goal=user_input, domain=domain, steps=steps)
         prepared_plan, approval = self.request_approval(plan, routed.context)
         results = self.execute_plan_streaming(
             prepared_plan,
