@@ -1,13 +1,27 @@
 from __future__ import annotations
 
-from typing import Any, Dict
+import platform
+import socket
+from collections import Counter, defaultdict
+from typing import Any, Dict, Iterable, List, Set
+
+try:
+    import psutil  # type: ignore
+except ImportError as exc:  # pragma: no cover - exercised in tests via stubbing
+    psutil = None  # type: ignore
+    _PSUTIL_IMPORT_ERROR = exc
+else:
+    _PSUTIL_IMPORT_ERROR = None
 
 from ..base import BasePlugin
 from ...core.schemas import Approval, ExecutionError
 
 
+PROCESS_PERMISSION_NOTE = "process mapping limited by permissions"
+
+
 class SystemPlugin(BasePlugin):
-    """Allowlisted system plugin supporting open_app and net_snapshot."""
+    """Allowlisted system plugin supporting read-only access overview actions."""
 
     allowed_apps = {"spotify", "notes", "browser"}
     _net_details = {"summary", "interfaces"}
@@ -16,6 +30,10 @@ class SystemPlugin(BasePlugin):
         return {
             "open_app": {"app": list(self.allowed_apps)},
             "net_snapshot": {"detail": list(self._net_details)},
+            "net_connections": {},
+            "exposure_snapshot": {},
+            "local_devices": {},
+            "access_overview": {},
         }
 
     def validate_args(self, action: str, args: Dict[str, Any]) -> None:
@@ -23,6 +41,8 @@ class SystemPlugin(BasePlugin):
             self._validate_open_app(args)
         elif action == "net_snapshot":
             self._validate_net_snapshot(args)
+        elif action in {"net_connections", "exposure_snapshot", "local_devices", "access_overview"}:
+            return
         else:
             raise ExecutionError("Unknown system action requested")
 
@@ -35,6 +55,14 @@ class SystemPlugin(BasePlugin):
             detail = args.get("detail", "summary")
             payload = {"summary": "no anomalies", "interfaces": ["lo", "eth0"]}
             return {"action": action, "detail": detail, "data": payload[detail]}
+        if action == "net_connections":
+            return self._net_connections()
+        if action == "exposure_snapshot":
+            return self._exposure_snapshot()
+        if action == "local_devices":
+            return self._local_devices()
+        if action == "access_overview":
+            return self._access_overview()
         raise ExecutionError("Unknown system action requested")
 
     def _validate_open_app(self, args: Dict[str, Any]) -> None:
@@ -46,3 +74,212 @@ class SystemPlugin(BasePlugin):
         detail = args.get("detail", "summary")
         if detail not in self._net_details:
             raise ExecutionError("net_snapshot detail must be 'summary' or 'interfaces'")
+
+    def _net_connections(self) -> Dict[str, Any]:
+        ps = self._require_psutil()
+        notes: List[str] = []
+        connections = []
+        try:
+            psutil_conns = ps.net_connections(kind="inet")
+        except Exception as exc:  # pragma: no cover - unexpected platform errors
+            raise ExecutionError(f"Failed to enumerate network connections: {exc}") from exc
+
+        for conn in psutil_conns:
+            proto = "tcp" if conn.type == socket.SOCK_STREAM else "udp"
+            state = conn.status
+            local_ip, local_port = self._addr_fields(conn.laddr)
+            remote_ip, remote_port = self._addr_fields(conn.raddr)
+            pid = conn.pid
+            process_name = self._safe_process_name_with_module(pid, notes, ps)
+
+            connections.append(
+                {
+                    "proto": proto,
+                    "state": state,
+                    "local_ip": local_ip,
+                    "local_port": local_port,
+                    "remote_ip": remote_ip,
+                    "remote_port": remote_port,
+                    "pid": pid,
+                    "process_name": process_name,
+                }
+            )
+
+        return {"ok": True, "action": "net_connections", "data": connections, "notes": notes}
+
+    def _exposure_snapshot(self, *_args, connections_result: Dict[str, Any] | None = None) -> Dict[str, Any]:
+        connections_result = connections_result or self._net_connections()
+        notes = list(connections_result.get("notes", []))
+        listening = [c for c in connections_result.get("data", []) if c.get("state") == "LISTEN"]
+
+        grouped: Dict[tuple[int | None, int | None, str | None], Dict[str, Set[str] | List[int | None]]] = defaultdict(
+            lambda: {"local_ips": set(), "protocols": set()}
+        )
+        for conn in listening:
+            key = (conn.get("local_port"), conn.get("pid"), conn.get("process_name"))
+            grouped[key]["local_ips"].add(conn.get("local_ip"))
+            grouped[key]["protocols"].add(conn.get("proto"))
+
+        services = []
+        for (port, pid, name), details in grouped.items():
+            services.append(
+                {
+                    "local_port": port,
+                    "pid": pid,
+                    "process_name": name,
+                    "local_ips": sorted(filter(None, details["local_ips"])),
+                    "protocols": sorted(details["protocols"]),
+                }
+            )
+
+        rdp_enabled = self._detect_rdp()
+        return {
+            "ok": True,
+            "action": "exposure_snapshot",
+            "data": {"listening": services, "rdp_enabled": rdp_enabled},
+            "notes": notes,
+        }
+
+    def _local_devices(self) -> Dict[str, Any]:
+        ps = self._require_psutil()
+        notes: List[str] = []
+        usb_devices: List[Dict[str, Any]] = []
+        usb_supported = True
+        usb_reason = ""
+
+        try:
+            for partition in ps.disk_partitions(all=True):
+                if "removable" in partition.opts or partition.device.startswith("/dev/sd"):
+                    usb_devices.append(
+                        {
+                            "device": partition.device,
+                            "mountpoint": partition.mountpoint,
+                            "fstype": partition.fstype,
+                        }
+                    )
+        except Exception as exc:  # pragma: no cover - platform-specific
+            usb_supported = False
+            usb_reason = f"psutil cannot enumerate devices: {exc}"
+
+        bluetooth_supported = False
+        bluetooth_reason = "Bluetooth inspection not available without platform APIs"
+        bluetooth_adapter_present = False
+        bluetooth_connections: List[str] = []
+
+        bluetooth = {
+            "supported": bluetooth_supported,
+            "adapter_present": bluetooth_adapter_present,
+            "connected_devices": bluetooth_connections,
+            "reason": bluetooth_reason,
+        }
+
+        usb = {
+            "supported": usb_supported,
+            "devices": usb_devices,
+        }
+        if not usb_supported:
+            usb["reason"] = usb_reason
+
+        return {
+            "ok": True,
+            "action": "local_devices",
+            "data": {"usb": usb, "bluetooth": bluetooth},
+            "notes": notes,
+        }
+
+    def _access_overview(self) -> Dict[str, Any]:
+        connections_result = self._net_connections()
+        exposure_result = self._exposure_snapshot(connections_result=connections_result)
+        local_devices = self._local_devices()
+
+        connections = connections_result.get("data", [])
+        established = sum(1 for conn in connections if conn.get("state") == "ESTABLISHED")
+        listening = sum(1 for conn in connections if conn.get("state") == "LISTEN")
+        unique_remote_ips = len({conn.get("remote_ip") for conn in connections if conn.get("remote_ip")})
+
+        counts = Counter((conn.get("pid"), conn.get("process_name")) for conn in connections if conn.get("pid"))
+        top_processes = [
+            {
+                "pid": pid,
+                "process_name": name,
+                "connection_count": count,
+            }
+            for (pid, name), count in counts.most_common(5)
+        ]
+
+        notes = self._merge_notes(
+            connections_result.get("notes", []), exposure_result.get("notes", []), local_devices.get("notes", [])
+        )
+
+        return {
+            "ok": True,
+            "action": "access_overview",
+            "data": {
+                "summary": {
+                    "established": established,
+                    "listening": listening,
+                    "unique_remote_ips": unique_remote_ips,
+                },
+                "top_processes": top_processes,
+                "net_connections": connections_result.get("data", []),
+                "exposure_snapshot": exposure_result.get("data", {}),
+                "local_devices": local_devices.get("data", {}),
+            },
+            "notes": notes,
+        }
+
+    @staticmethod
+    def _addr_fields(addr: Any) -> tuple[str | None, int | None]:
+        if not addr:
+            return None, None
+        if isinstance(addr, tuple):  # pragma: no cover - legacy psutil tuple form
+            ip, port = addr
+            return ip, port
+        return getattr(addr, "ip", None), getattr(addr, "port", None)
+
+    def _safe_process_name(self, pid: int | None, notes: List[str]) -> str | None:
+        return self._safe_process_name_with_module(pid, notes, psutil)
+
+    def _safe_process_name_with_module(self, pid: int | None, notes: List[str], ps) -> str | None:
+        if not pid or ps is None:
+            return None
+        try:
+            return ps.Process(pid).name()
+        except ps.AccessDenied:
+            self._append_note(notes, PROCESS_PERMISSION_NOTE)
+            return None
+        except (ps.NoSuchProcess, ps.ZombieProcess):
+            return None
+
+    @staticmethod
+    def _detect_rdp() -> bool | None:
+        if platform.system().lower() != "windows":
+            return None
+        try:
+            ps = SystemPlugin._require_psutil()
+            service = ps.win_service_get("TermService")
+            return service.status().lower() == "running"
+        except Exception:  # pragma: no cover - best-effort only
+            return None
+
+    @staticmethod
+    def _require_psutil():
+        if psutil is None:
+            raise ExecutionError("psutil is required for this action") from _PSUTIL_IMPORT_ERROR
+        return psutil
+
+    @staticmethod
+    def _append_note(notes: List[str], note: str) -> None:
+        if note not in notes:
+            notes.append(note)
+
+    @staticmethod
+    def _merge_notes(*note_lists: Iterable[str]) -> List[str]:
+        seen: Set[str] = set()
+        merged: List[str] = []
+        for note_list in note_lists:
+            for note in note_list:
+                if note not in seen:
+                    seen.add(note)
+                    merged.append(note)
+        return merged

@@ -17,7 +17,14 @@ class PolicyEngine:
         signature_secret: str = "signed-policy",
     ) -> None:
         self.allowlist = allowlist or {
-            "system": {"open_app", "net_snapshot"},
+            "system": {
+                "open_app",
+                "net_snapshot",
+                "net_connections",
+                "exposure_snapshot",
+                "local_devices",
+                "access_overview",
+            },
             "spotify": {"play"},
             "gmail": {"send"},
             "openai": {"draft", "generate_text", "draft_email", "summarize", "summarize_text", "outline"},
