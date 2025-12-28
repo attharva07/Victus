@@ -59,3 +59,27 @@ def test_app_runs_mixed_phase_two_flow():
     assert results["step-2"]["doc_id"].startswith("doc-Phase 2")
     audit_record = app.audit.records[-1]
     assert audit_record.approval.requires_confirmation is False
+
+
+def test_system_intent_router_skips_planner(monkeypatch):
+    app = VictusApp({"system": SystemPlugin()})
+    planner_called = False
+
+    original_build_plan = app.build_plan
+
+    def _spy_build_plan(*args, **kwargs):
+        nonlocal planner_called
+        planner_called = True
+        return original_build_plan(*args, **kwargs)
+
+    app.build_plan = _spy_build_plan  # type: ignore[assignment]
+
+    results = app.run_request(
+        user_input="system status",
+        context=build_context(),
+        domain="system",
+        steps=[],
+    )
+
+    assert planner_called is False
+    assert results["step-1"]["action"] == "status"

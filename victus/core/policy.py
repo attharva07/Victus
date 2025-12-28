@@ -18,10 +18,12 @@ class PolicyEngine:
     ) -> None:
         self.allowlist = allowlist or {
             "system": {
+                "status",
                 "open_app",
                 "net_snapshot",
                 "net_connections",
                 "exposure_snapshot",
+                "bt_status",
                 "local_devices",
                 "access_overview",
             },
