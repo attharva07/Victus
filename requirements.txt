@@ -1,3 +1,4 @@
 pytest
 PySide6
 python-dotenv
+psutil>=5.9.8
