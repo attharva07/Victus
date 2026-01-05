@@ -18,13 +18,13 @@ def _output(result, json_mode: bool):
             print(result["memory_id"])
         elif "proposals" in result:
             for p in result["proposals"]:
-                print(f"{p.proposal_id} {p.status} {p.category} {p.content}")
+                print(f"{p.proposal_id} {p.status} {p.memory_type} {p.content}")
 
 
 def propose(args):
     tags = parse_tags(args.tags)
     try:
-        proposal_id = service.propose_memory(args.category, args.content, args.confidence, tags)
+        proposal_id = service.propose_memory(args.category, args.content, True, tags)
         _output({"ok": True, "proposal_id": proposal_id}, args.json)
         return EXIT_SUCCESS
     except MemoryServiceError:
