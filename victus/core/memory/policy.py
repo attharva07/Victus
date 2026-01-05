@@ -1,35 +1,61 @@
+"""Memory write policy enforcement."""
+
+from __future__ import annotations
+
+import json
 import re
-from typing import Tuple
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import TYPE_CHECKING, List, Tuple
 
-from .models import ALLOWED_CATEGORIES
-
-
-_DENYLIST_PATTERNS = [
-    re.compile(r"\bI felt\b", re.IGNORECASE),
-    re.compile(r"\bdepressed\b", re.IGNORECASE),
-    re.compile(r"\banxious\b", re.IGNORECASE),
-    re.compile(r"\brain dump\b", re.IGNORECASE),
-    re.compile(r"\btranscript\b", re.IGNORECASE),
-    re.compile(r"\btoday\b", re.IGNORECASE),
-    re.compile(r"\btomorrow\b", re.IGNORECASE),
-]
+if TYPE_CHECKING:
+    from .proposals import MemoryProposal
 
 
-def validate_category(category: str) -> bool:
-    return category in ALLOWED_CATEGORIES
+MEMORY_TYPES = {
+    "preference",
+    "project_context",
+    "workflow_rule",
+    "ephemeral",
+    "identity_sensitive",
+}
 
 
-def detect_denied_content(content: str) -> Tuple[bool, str]:
-    for pattern in _DENYLIST_PATTERNS:
-        if pattern.search(content):
-            return True, f"Content matches denylist pattern: {pattern.pattern}"
-    return False, ""
+@dataclass
+class MemoryPolicy:
+    secret_patterns: List[str] = field(default_factory=list)
+
+    @classmethod
+    def load(cls, path: Path) -> "MemoryPolicy":
+        if not path.exists():
+            return cls()
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return cls(secret_patterns=data.get("secret_patterns", []))
 
 
-def validate_memory_proposal(category: str, content: str) -> Tuple[bool, str]:
-    if not validate_category(category):
-        return False, "Category is not allowed"
-    denied, reason = detect_denied_content(content)
-    if denied:
-        return False, reason
-    return True, ""
+def _matches_secret(content: str, patterns: List[str]) -> bool:
+    for pattern in patterns:
+        if re.search(pattern, content):
+            return True
+    return False
+
+
+def validate_memory_write(proposal: "MemoryProposal", policy: MemoryPolicy) -> Tuple[bool, List[str]]:
+    reasons: List[str] = []
+
+    if proposal.memory_type not in MEMORY_TYPES:
+        reasons.append("memory_type is not allowed")
+
+    if proposal.source != "manual_review":
+        reasons.append("memory writes require manual_review source")
+
+    if proposal.memory_type == "ephemeral":
+        reasons.append("ephemeral memory cannot be persisted")
+
+    if _matches_secret(proposal.content, policy.secret_patterns):
+        reasons.append("content appears to contain secrets")
+
+    if proposal.memory_type == "identity_sensitive" and not proposal.explicit_user_request:
+        reasons.append("identity_sensitive memory requires explicit user request")
+
+    return len(reasons) == 0, reasons

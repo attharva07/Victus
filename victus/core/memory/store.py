@@ -1,10 +1,36 @@
+"""Persistent memory store with gated writes."""
+
+from __future__ import annotations
+
+import json
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from ..util.jsonl import append_jsonl, read_jsonl
-from .models import MemoryRecord
+DEFAULT_STORE_PATH = Path("victus/data/memory/store.json")
+MEMORY_PATH = DEFAULT_STORE_PATH
 
-MEMORY_PATH = Path("data/memory/memory.jsonl")
+
+class MemoryStore:
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        if not self.path.exists():
+            self.path.write_text(json.dumps({"items": []}, indent=2), encoding="utf-8")
+
+    def _load(self) -> Dict[str, List[dict]]:
+        return json.loads(self.path.read_text(encoding="utf-8"))
+
+    def add(self, item: Dict[str, object]) -> None:
+        data = self._load()
+        data.setdefault("items", []).append(item)
+        self.path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def list(self, domain: Optional[str] = None) -> List[dict]:
+        data = self._load()
+        items = data.get("items", [])
+        if domain:
+            items = [item for item in items if item.get("domain") == domain]
+        return items
 
 
 class MemoryStoreError(PermissionError):
@@ -13,21 +39,21 @@ class MemoryStoreError(PermissionError):
 
 def append_memory(record: Dict, *, authorized: bool = False) -> None:
     if not authorized:
-        raise MemoryStoreError("Memory writes must go through the service approval flow")
-    append_jsonl(MEMORY_PATH, record)
+        raise MemoryStoreError("Memory writes must go through manual review")
+    store = MemoryStore(DEFAULT_STORE_PATH)
+    store.add(record)
 
 
-def list_memory(limit: Optional[int] = None, category: Optional[str] = None) -> List[MemoryRecord]:
-    records = [MemoryRecord(**rec) for rec in read_jsonl(MEMORY_PATH)]
-    if category:
-        records = [r for r in records if r.category == category]
+def list_memory(limit: Optional[int] = None, domain: Optional[str] = None) -> List[dict]:
+    store = MemoryStore(DEFAULT_STORE_PATH)
+    records = store.list(domain=domain)
     if limit:
         records = records[-limit:]
     return records
 
 
-def get_memory_by_id(memory_id: str) -> Optional[MemoryRecord]:
-    for record in list_memory():
-        if record.id == memory_id:
-            return record
+def get_memory_by_id(memory_id: str) -> Optional[dict]:
+    for item in list_memory():
+        if item.get("id") == memory_id:
+            return item
     return None
