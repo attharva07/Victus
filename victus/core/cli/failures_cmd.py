@@ -1,8 +1,11 @@
 import argparse
 import json
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
+from ..failures import FailureLogger
+from ..failures.schema import RESOLUTION_STATUSES
 from ..failures import service
-from ..failures.service import FailureNotFound
 from .constants import EXIT_NOT_FOUND, EXIT_SUCCESS, EXIT_VALIDATION
 
 
@@ -25,28 +28,52 @@ def log(args):
 
 
 def list_cmd(args):
-    failures = service.list_failures(
-        status=args.status,
-        severity=args.severity,
-        since=args.days,
-        limit=args.limit,
+    days = args.days if args.days is not None else 7
+    end = datetime.now(timezone.utc)
+    start = end - timedelta(days=days)
+    logger = FailureLogger(Path("victus/data/failures"))
+    failures = logger.list_failures(
+        start,
+        end,
+        filters={
+            "domain": args.domain,
+            "severity": args.severity,
+            "status": args.status,
+            "category": args.category,
+        },
     )
     if args.json:
-        print(json.dumps({"failures": [f.__dict__ for f in failures]}))
+        print(json.dumps({"failures": [f.to_dict() for f in failures]}))
     else:
         for f in failures:
-            print(f"{f.failure_id} {f.status} {f.context} {f.what_failed}")
+            status = f.resolution.get("status")
+            print(f"{f.event_id} {status} {f.domain} {f.failure.get('code')}")
     return EXIT_SUCCESS
 
 
 def set_status(args):
     try:
-        service.mark_status(args.failure_id, args.status)
+        if args.status not in RESOLUTION_STATUSES:
+            return EXIT_VALIDATION
+        logger = FailureLogger(Path("victus/data/failures"))
+        logger.update_resolution(args.event_id, args.status, args.note)
         return EXIT_SUCCESS
-    except FailureNotFound:
+    except KeyError:
         return EXIT_NOT_FOUND
     except Exception:
         return EXIT_VALIDATION
+
+
+def show_cmd(args):
+    logger = FailureLogger(Path("victus/data/failures"))
+    event = logger.get_failure(args.event_id)
+    if not event:
+        return EXIT_NOT_FOUND
+    if args.json:
+        print(json.dumps({"failure": event.to_dict()}))
+    else:
+        print(json.dumps(event.to_dict(), indent=2))
+    return EXIT_SUCCESS
 
 
 def register(subparsers: argparse._SubParsersAction):
@@ -63,14 +90,21 @@ def register(subparsers: argparse._SubParsersAction):
     log_parser.set_defaults(handler=log)
 
     list_parser = failure_sub.add_parser("list")
-    list_parser.add_argument("--status")
+    list_parser.add_argument("--domain")
     list_parser.add_argument("--severity")
+    list_parser.add_argument("--status")
+    list_parser.add_argument("--category")
     list_parser.add_argument("--days", type=int)
-    list_parser.add_argument("--limit", type=int)
     list_parser.add_argument("--json", action="store_true")
     list_parser.set_defaults(handler=list_cmd)
 
+    show_parser = failure_sub.add_parser("show")
+    show_parser.add_argument("event_id")
+    show_parser.add_argument("--json", action="store_true")
+    show_parser.set_defaults(handler=show_cmd)
+
     status_parser = failure_sub.add_parser("set-status")
-    status_parser.add_argument("--failure-id", required=True)
-    status_parser.add_argument("--status", required=True)
+    status_parser.add_argument("event_id")
+    status_parser.add_argument("status")
+    status_parser.add_argument("--note")
     status_parser.set_defaults(handler=set_status)

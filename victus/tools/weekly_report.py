@@ -6,7 +6,7 @@ import argparse
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Dict, Iterable, Tuple
+from typing import Dict, Iterable, List, Tuple
 
 from victus.core.failures import FailureEvent, FailureLogger
 
@@ -33,8 +33,11 @@ def _group_recurring(events: Iterable[FailureEvent]):
     for event in events:
         stack_hash = event.failure.get("stack_hash")
         key = stack_hash or f"{event.failure.get('code')}:{event.component}"
-        groups.setdefault(key, {"count": 0, "example": event})
+        groups.setdefault(key, {"count": 0, "example": event, "events": []})
         groups[key]["count"] += 1
+        groups[key]["events"].append(event)
+    for data in groups.values():
+        data["events"].sort(key=lambda e: (e.ts, e.event_id))
     return groups
 
 
@@ -69,7 +72,7 @@ def _format_recurring(groups: Dict[str, Dict[str, object]]) -> str:
         lines.append("- None recorded")
         return "\n".join(lines)
 
-    sorted_groups = sorted(groups.items(), key=lambda item: item[1]["count"], reverse=True)
+    sorted_groups = sorted(groups.items(), key=lambda item: (-item[1]["count"], item[0]))
     for key, data in sorted_groups:
         example: FailureEvent = data["example"]
         lines.append(
@@ -94,13 +97,40 @@ def _format_policy(events: Iterable[FailureEvent]) -> str:
 def _format_backlog(groups: Dict[str, Dict[str, object]]) -> str:
     lines = ["## Suggested backlog items"]
     any_items = False
-    for key, data in groups.items():
+    for key, data in sorted(groups.items(), key=lambda item: (-item[1]["count"], item[0])):
         if data["count"] >= 3:
             any_items = True
             example: FailureEvent = data["example"]
             lines.append(f"- Investigate {key} affecting {example.component} ({data['count']} occurrences)")
     if not any_items:
         lines.append("- None above threshold")
+    return "\n".join(lines)
+
+
+def _infer_test_target(event: FailureEvent) -> str:
+    component = event.component
+    if component:
+        return f"victus.core.{component}"
+    return f"victus.domains.{event.domain}"
+
+
+def _format_regression_suggestions(groups: Dict[str, Dict[str, object]]) -> str:
+    lines = ["## Suggested Regression Tests"]
+    suggestions: List[Tuple[str, Dict[str, object]]] = [
+        item for item in groups.items() if item[1]["count"] >= 3
+    ]
+    if not suggestions:
+        lines.append("- None above threshold")
+        return "\n".join(lines)
+    for key, data in sorted(suggestions, key=lambda item: (-item[1]["count"], item[0])):
+        events: List[FailureEvent] = data["events"]
+        example: FailureEvent = data["example"]
+        event_ids = [event.event_id for event in events[:3]]
+        target = _infer_test_target(example)
+        lines.append(f"- signature: {key}")
+        lines.append(f"  - count: {data['count']}")
+        lines.append(f"  - example_event_ids: {', '.join(event_ids)}")
+        lines.append(f"  - recommended_target: {target}")
     return "\n".join(lines)
 
 
@@ -113,6 +143,7 @@ def generate_report(events: Iterable[FailureEvent]) -> str:
         _format_recurring(recurring),
         _format_policy(events_list),
         _format_backlog(recurring),
+        _format_regression_suggestions(recurring),
     ]
     return "\n\n".join(parts)
 

@@ -7,7 +7,7 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from .policy import MemoryPolicy, validate_memory_write
 from .store import MemoryStore
@@ -37,7 +37,9 @@ class MemoryProposal:
     source: str
     explicit_user_request: bool
     risk_flags: List[str] = field(default_factory=list)
-    status: str = "pending"
+    status: str = "new"
+    review_notes: Optional[str] = None
+    reviewed_ts: Optional[str] = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -76,14 +78,26 @@ def save_proposal(proposal: MemoryProposal, directory: Path | None = None) -> Pa
 
 def _load_proposal(path: Path) -> MemoryProposal:
     data = json.loads(path.read_text(encoding="utf-8"))
+    data.setdefault("status", "new")
+    data.setdefault("review_notes", None)
+    data.setdefault("reviewed_ts", None)
     return MemoryProposal(**data)
 
 
-def list_proposals(directory: Path | None = None) -> List[MemoryProposal]:
+def list_proposals(
+    directory: Path | None = None,
+    *,
+    status: str | None = None,
+    domain: str | None = None,
+) -> List[MemoryProposal]:
     dir_path = directory or PROPOSALS_PATH
     if not dir_path.exists():
         return []
     proposals = [_load_proposal(path) for path in dir_path.glob("*.json")]
+    if status:
+        proposals = [proposal for proposal in proposals if proposal.status == status]
+    if domain:
+        proposals = [proposal for proposal in proposals if proposal.domain == domain]
     proposals.sort(key=lambda p: p.ts)
     return proposals
 
@@ -95,8 +109,8 @@ def approve_proposal(proposal_id: str, directory: Path | None = None) -> str:
         raise ProposalNotFound(proposal_id)
 
     proposal = _load_proposal(path)
-    if proposal.status != "pending":
-        raise PermissionError("Proposal is not pending")
+    if proposal.status != "new":
+        raise PermissionError("Proposal is not new")
     policy = MemoryPolicy.load(POLICY_PATH)
     allowed, reasons = validate_memory_write(proposal, policy)
     if not allowed:
@@ -118,5 +132,31 @@ def approve_proposal(proposal_id: str, directory: Path | None = None) -> str:
     )
 
     proposal.status = "approved"
+    proposal.reviewed_ts = _now()
+    proposal.review_notes = None
     save_proposal(proposal, dir_path)
     return memory_id
+
+
+def reject_proposal(proposal_id: str, reason: str, directory: Path | None = None) -> None:
+    dir_path = directory or PROPOSALS_PATH
+    path = dir_path / f"{proposal_id}.json"
+    if not path.exists():
+        raise ProposalNotFound(proposal_id)
+
+    proposal = _load_proposal(path)
+    if proposal.status != "new":
+        raise PermissionError("Proposal is not new")
+
+    proposal.status = "rejected"
+    proposal.review_notes = reason
+    proposal.reviewed_ts = _now()
+    save_proposal(proposal, dir_path)
+
+
+def get_proposal(proposal_id: str, directory: Path | None = None) -> MemoryProposal:
+    dir_path = directory or PROPOSALS_PATH
+    path = dir_path / f"{proposal_id}.json"
+    if not path.exists():
+        raise ProposalNotFound(proposal_id)
+    return _load_proposal(path)

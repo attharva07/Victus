@@ -9,7 +9,9 @@ from .proposals import (
     ProposalNotFound,
     MemoryProposal,
     approve_proposal as _approve_proposal,
+    get_proposal,
     list_proposals,
+    reject_proposal as _reject_proposal,
     save_proposal,
 )
 
@@ -42,12 +44,26 @@ def approve_memory(proposal_id: str) -> str:
         raise
 
 
-def list_memory_proposals():
-    return list_proposals()
+def list_memory_proposals(
+    status: Optional[str] = None, domain: Optional[str] = None, limit: Optional[int] = None
+):
+    proposals = list_proposals(status=status, domain=domain)
+    if limit:
+        proposals = proposals[-limit:]
+    return proposals
 
 
-def reject_memory(proposal_id: str) -> None:
-    raise MemoryServiceError("Rejection flow not implemented for manual review")
+def show_memory_proposal(proposal_id: str) -> MemoryProposal:
+    return get_proposal(proposal_id)
+
+
+def reject_memory(proposal_id: str, reason: str) -> None:
+    try:
+        _reject_proposal(proposal_id, reason)
+    except PermissionError as exc:
+        raise MemoryServiceError(str(exc)) from exc
+    except ProposalNotFound as exc:
+        raise
 
 
 def revise_memory(proposal_id: str, new_content: str) -> None:
