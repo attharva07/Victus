@@ -1,15 +1,24 @@
 from __future__ import annotations
 
 import platform
+import re
 import subprocess
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import List, Tuple
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from victus.core.failures import FailureLogger
+from victus.core.memory import proposals
+
 DOCS_PATH = ROOT / "docs" / "QUALITY_REPORT.md"
+FAILURES_DIR = ROOT / "victus" / "data" / "failures"
+PROPOSALS_DIR = ROOT / "victus" / "data" / "memory" / "proposals"
+WEEKLY_REPORT_DIR = ROOT / "victus" / "reports" / "weekly"
 
 
 @dataclass
@@ -86,6 +95,10 @@ def _write_report(checks: List[CheckResult], coverage: str, uncovered: List[str]
     timestamp = datetime.now(timezone.utc).isoformat()
     commit_hash = _git_commit()
     python_version = platform.python_version()
+    failures_last_week = _count_failures_last_week()
+    new_proposals = _count_new_proposals()
+    latest_report = _latest_weekly_report()
+    recurring_signatures = _count_recurring_signatures_last_week()
 
     lines = [
         "# Victus Quality Report",
@@ -104,6 +117,17 @@ def _write_report(checks: List[CheckResult], coverage: str, uncovered: List[str]
         note = check.note or (check.output.splitlines()[0] if check.output else "")
         lines.append(f"| {check.name} | {status} | {note} |")
 
+    lines.extend(
+        [
+            "",
+            "## Operational Metrics",
+            f"- Failures in last 7 days: {failures_last_week}",
+            f"- New memory proposals: {new_proposals}",
+            f"- Latest weekly report: {latest_report}",
+            f"- Recurring signatures >=3 in last 7 days: {recurring_signatures}",
+        ]
+    )
+
     lines.extend(["", "## Coverage", f"Reported coverage: {coverage or 'unknown'}"])
     if uncovered:
         lines.append("Top uncovered lines:")
@@ -116,6 +140,49 @@ def _write_report(checks: List[CheckResult], coverage: str, uncovered: List[str]
         lines.extend(["", "## Failing Tests", *[f"- {line}" for line in failures]])
 
     DOCS_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _count_failures_last_week() -> int:
+    if not FAILURES_DIR.exists():
+        return 0
+    logger = FailureLogger(FAILURES_DIR)
+    end = datetime.now(timezone.utc)
+    start = end - timedelta(days=7)
+    return sum(1 for _ in logger.iter_events(start, end))
+
+
+def _count_new_proposals() -> int:
+    if not PROPOSALS_DIR.exists():
+        return 0
+    try:
+        return len(proposals.list_proposals(PROPOSALS_DIR, status="new"))
+    except Exception:
+        return 0
+
+
+def _latest_weekly_report() -> str:
+    if not WEEKLY_REPORT_DIR.exists():
+        return "none"
+    pattern = re.compile(r"^\\d{4}-W\\d{2}\\.md$|^\\d{4}-\\d{2}\\.md$")
+    reports = [path for path in WEEKLY_REPORT_DIR.glob("*.md") if pattern.match(path.name)]
+    if not reports:
+        return "none"
+    latest = max(reports, key=lambda path: path.stat().st_mtime)
+    return latest.name
+
+
+def _count_recurring_signatures_last_week() -> int:
+    if not FAILURES_DIR.exists():
+        return 0
+    logger = FailureLogger(FAILURES_DIR)
+    end = datetime.now(timezone.utc)
+    start = end - timedelta(days=7)
+    counts: dict[str, int] = {}
+    for event in logger.iter_events(start, end):
+        stack_hash = event.failure.get("stack_hash")
+        key = stack_hash or f"{event.failure.get('code')}:{event.component}"
+        counts[key] = counts.get(key, 0) + 1
+    return sum(1 for count in counts.values() if count >= 3)
 
 
 def main() -> int:
