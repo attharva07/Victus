@@ -32,6 +32,7 @@ class PolicyEngine:
             "gmail": {"send"},
             "openai": {"draft", "generate_text", "draft_email", "summarize", "summarize_text", "outline"},
             "docs": {"create"},
+            "finance": {"add_transaction", "list_transactions", "month_summary", "export_logbook_md"},
         }
         self.tool_domains: Dict[str, str] = {
             "system": "system",
@@ -40,6 +41,7 @@ class PolicyEngine:
             "gmail": "productivity",
             "openai": "productivity",
             "docs": "productivity",
+            "finance": "productivity",
         }
         self.denylist: Set[str] = set(denylist or {"raw_shell", "kernel_exec", "firewall_modify"})
         self.signature_secret = signature_secret

@@ -1,22 +1,22 @@
 # Victus AI 2.0
 
 ## What Victus is
-Victus is a local-first assistant pipeline that routes every user request through a policy gate before any tool executes. It combines an LLM response path with a guarded task executor so you can type a single message and let Victus decide whether to chat, run a local action, or ask for clarification.
+Victus is a **local, policy-gated assistant** that routes every request through a deterministic router, an intent planner, and a policy gate before any tool executes. It is designed for local-first workflows: a single input box, streaming responses, and auditable events across tools, memory, and finance.
 
 ## Architecture overview
 ```
-Input
+User Input
   → Rule Router (fast, deterministic)
   → LLM Intent Planner (only if ambiguous)
   → Policy Engine (allowlist + privacy checks)
-  → Executor (validated tools only)
-  → Output (streamed events)
+  → Executor (validated tools + signatures)
+  → Event Stream (tokens, tool events, memory, finance)
 ```
 
 Key guarantees:
-- Tools are allowlisted and arguments are validated before execution.
-- LLMs can propose actions but never execute tools directly.
-- Policy approvals and signatures are required before any task runs.
+- **Allowlisted tools only**: tools and actions are explicitly mapped to domains.
+- **Policy signatures required**: every plan is signed before execution.
+- **Local-first**: memory + finance logs are stored under `victus_data/`.
 
 ## Local setup (Windows-first)
 1. Create and activate a virtual environment:
@@ -29,7 +29,7 @@ Key guarantees:
    ```bash
    pip install -r requirements.txt
    ```
-3. Configure an LLM provider (optional but recommended):
+3. Configure an LLM provider (optional):
    - **Ollama (local):**
      ```bash
      set LLM_PROVIDER=ollama
@@ -52,32 +52,34 @@ Key guarantees:
 - `status`: `thinking | executing | done | denied | error`
 - `token`: partial LLM text
 - `tool_start` / `tool_done`
+- `memory_used` / `memory_written`
 - `clarify` / `error`
 
-If the underlying LLM client does not support native streaming, Victus sends chunked fallback output so the UI still updates incrementally.
+The UI renders tokens as they arrive and logs every pipeline event in the Activity tab.
 
-## Task gating
-Local actions are routed through policy and only the allowlisted tools below can execute:
-- `local.open_app` (open a local app by name or path)
-- `local.open_youtube` (open a YouTube search or URL)
+## Memory + finance overview
+**Memory v1** is local, append-only JSONL storage with a gate that blocks sensitive data and only writes explicit or safe, important items:
+- Session memory (in-memory)
+- Project memory: `victus_data/memory/project.jsonl`
+- User memory: `victus_data/memory/user.jsonl`
 
-Every plan still flows through the policy engine, which enforces allowlists and privacy settings before execution.
+**Finance v1** provides a local SQLite logbook:
+- `victus_data/finance/finance.db`
+- Transactions, budgets, and paychecks
+- Exportable Markdown logbook reports
 
-## Current limitations
-- Text-only (no voice input yet)
-- Local-only server (no auth or multi-user support)
-- LLM intent planner is best-effort JSON; ambiguous prompts may trigger clarification
-- No long-running task state or background scheduling
+## Roadmap
+- ✅ Local web UI + streaming pipeline
+- ✅ Memory v1 (local JSONL with gating)
+- ✅ Finance Logbook v1 (SQLite)
+- ⏳ Permission prompts + confirmations
+- ⏳ Long-running task timelines
 
-## Roadmap timeline
-- ✅ Popup UI phase (completed)
-- ✅ Local web UI phase (current)
-- ✅ Unified pipeline + streaming (this update)
-- ⏳ Voice input + permission prompts (future)
-- ⏳ Long-running state and task history (future)
-
-## Documentation links
+## Documentation
+- [docs/architecture.md](docs/architecture.md)
+- [docs/memory.md](docs/memory.md)
+- [docs/finance.md](docs/finance.md)
+- [docs/ui.md](docs/ui.md)
+- [docs/roadmap.md](docs/roadmap.md)
 - [docs/DEV_GUIDE.md](docs/DEV_GUIDE.md)
 - [docs/POLICY.md](docs/POLICY.md)
-- [docs/LLM_PROVIDERS.md](docs/LLM_PROVIDERS.md)
-- [CONTRIBUTING.md](CONTRIBUTING.md)

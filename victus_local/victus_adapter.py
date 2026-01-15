@@ -16,6 +16,7 @@ from victus.domains.productivity.allowlisted_plugins import (
     OpenAIPlugin,
     SpotifyPlugin,
 )
+from victus.domains.productivity.finance_plugin import FinancePlugin
 from victus.domains.productivity.plugins.llm_base import LLMClientBase
 from victus.domains.system.system_plugin import SystemPlugin
 
@@ -118,10 +119,12 @@ class LocalIntentPlanner:
         prompt = (
             "You are an intent planner for a local desktop assistant. "
             "Decide if the user wants a tool action or a chat response. "
-            "Allowed tools: open_app (args: name or path), open_youtube (args: query or url). "
+            "Allowed tools: open_app (args: name or path), open_youtube (args: query or url), "
+            "finance.add_transaction, finance.list_transactions, finance.month_summary, finance.export_logbook_md. "
             "If you need clarification, ask for it. "
             "Respond with strict JSON only: "
-            "{\"intent\":\"chat|tool|clarify\",\"tool\":null|\"open_app\"|\"open_youtube\","
+            "{\"intent\":\"chat|tool|clarify\",\"tool\":null|\"open_app\"|\"open_youtube\"|\"finance\","
+            "\"action\":null|\"add_transaction\"|\"list_transactions\"|\"month_summary\"|\"export_logbook_md\","
             "\"args\":{},\"clarification\":null|\"...\"}.\n"
             f"User: {user_text}"
         )
@@ -136,10 +139,20 @@ class LocalIntentPlanner:
         intent = data.get("intent")
         if intent == "tool":
             tool = data.get("tool")
+            action = data.get("action")
+            if isinstance(tool, str) and "." in tool and not action:
+                tool, action = tool.split(".", 1)
             if tool == "open_app":
                 return IntentPlan(kind="tool", tool="local", action="open_app", args=data.get("args", {}))
             if tool == "open_youtube":
                 return IntentPlan(kind="tool", tool="local", action="open_youtube", args=data.get("args", {}))
+            if tool == "finance" and action in {
+                "add_transaction",
+                "list_transactions",
+                "month_summary",
+                "export_logbook_md",
+            }:
+                return IntentPlan(kind="tool", tool="finance", action=action, args=data.get("args", {}))
         if intent == "clarify":
             return IntentPlan(kind="clarify", message=data.get("clarification"))
         if intent == "chat":
@@ -168,6 +181,7 @@ def build_victus_app() -> VictusApp:
         "spotify": SpotifyPlugin(),
         "openai": OpenAIPlugin(),
         "local": LocalTaskPlugin(),
+        "finance": FinancePlugin(),
     }
     llm_client = plugins["openai"].client
     return VictusApp(
