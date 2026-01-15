@@ -6,6 +6,7 @@ const chatSend = document.getElementById("chat-send");
 const errorBanner = document.getElementById("error-banner");
 let streamingMessage = null;
 let streamingText = null;
+let activeStreamState = null;
 
 function setStatus(label, state) {
   statusPill.textContent = label;
@@ -137,6 +138,7 @@ async function sendChat() {
   hideErrorBanner();
   appendChat("You", message);
   chatInput.value = "";
+  activeStreamState = { hasToken: false, hasError: false, hasOutput: false };
 
   try {
     const response = await fetch("/api/turn", {
@@ -179,6 +181,7 @@ async function readTurnStream(response) {
   if (buffer.trim()) {
     parseSseBuffer(`${buffer}\n\n`);
   }
+  activeStreamState = null;
 }
 
 function handleTurnEvent(payload) {
@@ -209,11 +212,17 @@ function handleTurnEvent(payload) {
       result: payload.result,
     });
     appendChat("Victus", formatToolResult(payload));
+    if (activeStreamState) {
+      activeStreamState.hasOutput = true;
+    }
     return;
   }
   if (payload.event === "clarify") {
     appendChat("Victus", payload.message || "Can you clarify?");
     endStreamMessage();
+    if (activeStreamState) {
+      activeStreamState.hasOutput = true;
+    }
     return;
   }
   if (payload.event === "error") {

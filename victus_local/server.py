@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, AsyncIterator, Dict, Optional
 
 from fastapi import Body, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -130,6 +130,14 @@ async def turn_endpoint(payload: TurnRequest = Body(...)) -> StreamingResponse:
             yield f"data: {data}\n\n".encode("utf-8")
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@app.post("/api/chat")
+async def deprecated_chat_endpoint() -> JSONResponse:
+    return JSONResponse(
+        status_code=410,
+        content={"error": "Deprecated endpoint. Use POST /api/turn (SSE)."},
+    )
 
 
 @app.websocket("/ws/logs")
