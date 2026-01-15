@@ -94,6 +94,7 @@ class VictusApp:
         context: Context | None = None,
         domain: str | None = None,
         steps: Sequence[PlanStep] | None = None,
+        memory_prompt: str | None = None,
     ) -> AsyncIterator[TurnEvent]:
         """Run the unified request pipeline and stream structured events."""
 
@@ -149,6 +150,12 @@ class VictusApp:
                 plan_domain = domain or "productivity"
                 plan = self.build_plan(goal=message, domain=plan_domain, steps=plan_steps)
 
+            if memory_prompt:
+                for step in plan.steps:
+                    if step.tool == "openai" and step.action in {"generate_text", "draft"}:
+                        prompt = step.args.get("prompt")
+                        if isinstance(prompt, str) and prompt.strip():
+                            step.args["prompt"] = f"{memory_prompt}\n\nUser: {prompt}"
             prepared_plan, approval = self.request_approval(plan, active_context)
         except PolicyError as exc:
             yield TurnEvent(event="status", status="denied")

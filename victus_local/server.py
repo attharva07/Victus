@@ -14,7 +14,11 @@ from pydantic import BaseModel
 
 from victus.app import VictusApp
 from victus.core.schemas import TurnEvent
+from victus.memory.store import MemoryStore
 
+from .api_finance import router as finance_router
+from .api_memory import create_memory_router
+from .turn_handler import TurnHandler
 from .victus_adapter import build_victus_app
 
 logger = logging.getLogger("victus_local")
@@ -92,7 +96,11 @@ app = FastAPI()
 log_hub = LogHub()
 static_dir = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
-victus_app: VictusApp = build_victus_app()
+victus_app = build_victus_app()
+memory_store = MemoryStore()
+turn_handler = TurnHandler(victus_app, memory_store)
+app.include_router(finance_router)
+app.include_router(create_memory_router(memory_store))
 
 
 class TurnRequest(BaseModel):
@@ -131,12 +139,12 @@ async def turn_endpoint(payload: TurnRequest = Body(...), request: Request) -> S
                     yield f"data: {json.dumps(metrics_payload)}\n\n".encode("utf-8")
                 await _forward_event_to_logs(event)
                 data = json.dumps(_event_payload(event))
-                yield f"data: {data}\n\n".encode("utf-8")
+                yield f"event: {event.event}\ndata: {data}\n\n".encode("utf-8")
         except Exception as exc:  # noqa: BLE001
             error_event = TurnEvent(event="error", status="error", message=str(exc))
             await _forward_event_to_logs(error_event)
             data = json.dumps(_event_payload(error_event))
-            yield f"data: {data}\n\n".encode("utf-8")
+            yield f"event: {error_event.event}\ndata: {data}\n\n".encode("utf-8")
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
@@ -210,6 +218,12 @@ async def _forward_event_to_logs(event: TurnEvent) -> None:
             "tool_done",
             {"tool": event.tool, "action": event.action, "result": event.result},
         )
+        return
+    if event.event == "memory_used":
+        await log_hub.emit("info", "memory_used", event.result or {})
+        return
+    if event.event == "memory_written":
+        await log_hub.emit("info", "memory_written", event.result or {})
         return
     if event.event == "error":
         _log_error(event.message or "")

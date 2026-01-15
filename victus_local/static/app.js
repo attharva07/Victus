@@ -1,5 +1,4 @@
 const statusPill = document.getElementById("status-pill");
-const logConsole = document.getElementById("log-console");
 const chatInput = document.getElementById("chat-input");
 const chatOutput = document.getElementById("chat-output");
 const chatSend = document.getElementById("chat-send");
@@ -16,14 +15,37 @@ function setStatus(label, state) {
   }
 }
 
-function appendLog(entry) {
-  const line = document.createElement("div");
-  line.className = "log-entry";
-  line.innerHTML = `<span>[${entry.timestamp}]</span> ${entry.event} ${
-    entry.data ? JSON.stringify(entry.data) : ""
-  }`;
-  logConsole.appendChild(line);
-  logConsole.scrollTop = logConsole.scrollHeight;
+function addTimelineEntry(title, detail) {
+  const item = document.createElement("div");
+  item.className = "timeline-item";
+  const timestamp = new Date().toLocaleTimeString();
+  item.innerHTML = `<span>${timestamp}</span><strong>${title}</strong><div>${detail || ""}</div>`;
+  timeline.appendChild(item);
+  timeline.scrollTop = timeline.scrollHeight;
+}
+
+function addToolEntry(title, detail) {
+  const item = document.createElement("div");
+  item.className = "tool-item";
+  const timestamp = new Date().toLocaleTimeString();
+  item.innerHTML = `<span>${timestamp}</span><strong>${title}</strong><div>${detail || ""}</div>`;
+  toolLog.appendChild(item);
+  toolLog.scrollTop = toolLog.scrollHeight;
+}
+
+function addMemoryItem(container, record) {
+  const item = document.createElement("div");
+  item.className = "memory-item";
+  item.innerHTML = `
+    <span>${record.scope || "memory"} · ${record.kind || "context"}</span>
+    <strong>${record.text}</strong>
+  `;
+  container.appendChild(item);
+  container.scrollTop = container.scrollHeight;
+}
+
+function resetMemoryUsed() {
+  memoryUsed.innerHTML = "";
 }
 
 function appendChat(speaker, message) {
@@ -151,6 +173,7 @@ async function sendChat() {
   if (!message) {
     return;
   }
+  resetMemoryUsed();
   chatSend.disabled = true;
   hideErrorBanner();
   appendChat("You", message);
@@ -237,6 +260,19 @@ function handleTurnEvent(payload) {
     }
     return;
   }
+  if (payload.event === "memory_used") {
+    const items = payload.result?.items || [];
+    items.forEach((record) => addMemoryItem(memoryUsed, record));
+    addTimelineEntry("memory_used", `${payload.result?.count || 0} memories`);
+    return;
+  }
+  if (payload.event === "memory_written") {
+    if (payload.result) {
+      addMemoryItem(memoryRecent, payload.result);
+    }
+    addTimelineEntry("memory_written", payload.result?.text || "");
+    return;
+  }
   if (payload.event === "clarify") {
     appendChat("Victus", payload.message || "Can you clarify?");
     endStreamMessage();
@@ -269,6 +305,8 @@ function updateStatus(status) {
   if (status === "done") {
     setStatus("Connected", "connected");
     endStreamMessage();
+    refreshMemoryRecent();
+    refreshFinanceSummary();
     return;
   }
   if (status === "denied") {
@@ -368,6 +406,86 @@ function formatToolResult(payload) {
     return `Task complete: ${payload.result.message}.`;
   }
   return "Task complete.";
+}
+
+function connectLogsStream() {
+  const source = new EventSource("/api/logs/stream");
+  source.onmessage = (event) => {
+    const entry = JSON.parse(event.data);
+    if (entry.event === "status_update") {
+      updateStatus(entry.data.status);
+    }
+    addTimelineEntry(entry.event, JSON.stringify(entry.data || {}));
+  };
+  source.onerror = () => {
+    setStatus("Disconnected", "");
+  };
+}
+
+function setActiveTab(tabName) {
+  document.querySelectorAll(".tab").forEach((button) => {
+    button.classList.toggle("active", button.dataset.tab === tabName);
+  });
+  document.querySelectorAll(".tab-panel").forEach((panel) => {
+    panel.classList.toggle("active", panel.dataset.panel === tabName);
+  });
+}
+
+async function refreshMemoryRecent() {
+  const response = await fetch("/api/memory/recent?limit=6");
+  if (!response.ok) {
+    return;
+  }
+  const payload = await response.json();
+  memoryRecent.innerHTML = "";
+  payload.items.forEach((record) => addMemoryItem(memoryRecent, record));
+}
+
+async function refreshFinanceSummary() {
+  const response = await fetch("/api/finance/summary");
+  if (!response.ok) {
+    return;
+  }
+  const summary = await response.json();
+  financeSummary.innerHTML = `
+    <strong>${summary.month}</strong>
+    <ul>
+      <li>Total income: ${summary.total_income}</li>
+      <li>Total expense: ${summary.total_expense}</li>
+      <li>Net: ${summary.net}</li>
+      <li>Transactions: ${summary.count}</li>
+    </ul>
+  `;
+}
+
+async function handleFinanceSubmit(event) {
+  event.preventDefault();
+  const formData = new FormData(financeForm);
+  const payload = Object.fromEntries(formData.entries());
+  payload.amount = parseFloat(payload.amount);
+  const response = await fetch("/api/finance/transaction", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    financePreview.textContent = "Unable to save transaction.";
+    return;
+  }
+  const result = await response.json();
+  financePreview.textContent = `Saved: ${result.preview}`;
+  financeForm.reset();
+  refreshFinanceSummary();
+}
+
+async function handleFinanceExport() {
+  const response = await fetch("/api/finance/export?range=month");
+  if (!response.ok) {
+    financeExportOutput.textContent = "Export failed.";
+    return;
+  }
+  const payload = await response.json();
+  financeExportOutput.textContent = payload.markdown || "";
 }
 
 chatSend.addEventListener("click", sendChat);
