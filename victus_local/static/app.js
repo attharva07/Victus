@@ -1,100 +1,60 @@
 const statusPill = document.getElementById("status-pill");
 const chatInput = document.getElementById("chat-input");
 const chatOutput = document.getElementById("chat-output");
+const logsOutput = document.getElementById("logs-output");
 const chatSend = document.getElementById("chat-send");
-const errorBanner = document.getElementById("error-banner");
+const chatStop = document.getElementById("chat-stop");
+
+let activeController = null;
 let streamingMessage = null;
 let streamingText = null;
-let activeStreamState = null;
+let logsSource = null;
+let reconnectTimeout = null;
 
 function setStatus(label, state) {
   statusPill.textContent = label;
-  statusPill.classList.remove("connected", "busy", "error", "denied");
+  statusPill.classList.remove("connected", "busy", "error");
   if (state) {
     statusPill.classList.add(state);
   }
 }
 
-function addTimelineEntry(title, detail) {
-  const item = document.createElement("div");
-  item.className = "timeline-item";
-  const timestamp = new Date().toLocaleTimeString();
-  item.innerHTML = `<span>${timestamp}</span><strong>${title}</strong><div>${detail || ""}</div>`;
-  timeline.appendChild(item);
-  timeline.scrollTop = timeline.scrollHeight;
+function setStatusFromServer(status) {
+  if (status === "thinking") {
+    setStatus("Thinking", "busy");
+    return;
+  }
+  if (status === "executing") {
+    setStatus("Executing", "busy");
+    return;
+  }
+  if (status === "done") {
+    setStatus("Done", "connected");
+    return;
+  }
+  if (status === "error") {
+    setStatus("Error", "error");
+  }
 }
 
-function addToolEntry(title, detail) {
-  const item = document.createElement("div");
-  item.className = "tool-item";
-  const timestamp = new Date().toLocaleTimeString();
-  item.innerHTML = `<span>${timestamp}</span><strong>${title}</strong><div>${detail || ""}</div>`;
-  toolLog.appendChild(item);
-  toolLog.scrollTop = toolLog.scrollHeight;
-}
-
-function addMemoryItem(container, record) {
-  const item = document.createElement("div");
-  item.className = "memory-item";
-  item.innerHTML = `
-    <span>${record.scope || "memory"} · ${record.kind || "context"}</span>
-    <strong>${record.text}</strong>
-  `;
-  container.appendChild(item);
-  container.scrollTop = container.scrollHeight;
-}
-
-function resetMemoryUsed() {
-  memoryUsed.innerHTML = "";
-}
-
-function appendChat(speaker, message) {
+function appendMessage(role, message) {
   const paragraph = document.createElement("p");
-  paragraph.innerHTML = `<strong>${speaker}:</strong> ${message}`;
+  const strong = document.createElement("strong");
+  strong.textContent = `${role}: `;
+  const span = document.createElement("span");
+  span.textContent = message;
+  paragraph.appendChild(strong);
+  paragraph.appendChild(span);
   chatOutput.appendChild(paragraph);
   chatOutput.scrollTop = chatOutput.scrollHeight;
 }
 
-function appendActivityLog(event, data = {}) {
-  appendLog({
-    timestamp: new Date().toISOString(),
-    event,
-    data,
-  });
-}
-
-function showErrorBanner(message) {
-  if (!errorBanner) {
-    return;
-  }
-  errorBanner.textContent = message;
-  errorBanner.classList.remove("hidden");
-}
-
-function hideErrorBanner() {
-  if (!errorBanner) {
-    return;
-  }
-  errorBanner.textContent = "";
-  errorBanner.classList.add("hidden");
-}
-
-function isOllamaMemoryError(message) {
-  if (!message) {
-    return false;
-  }
-  const lowered = message.toLowerCase();
-  return (
-    lowered.includes("requires more memory") ||
-    lowered.includes("requires more system memory") ||
-    lowered.includes("out of memory")
-  );
-}
-
 function beginStreamMessage() {
   streamingMessage = document.createElement("p");
+  const strong = document.createElement("strong");
+  strong.textContent = "Victus: ";
   streamingText = document.createElement("span");
-  streamingMessage.innerHTML = "<strong>Victus:</strong> ";
+  streamingMessage.appendChild(strong);
   streamingMessage.appendChild(streamingText);
   chatOutput.appendChild(streamingMessage);
 }
@@ -112,97 +72,106 @@ function endStreamMessage() {
   streamingText = null;
 }
 
+function addLogEntry(event, data = {}) {
+  const item = document.createElement("div");
+  item.className = "log-entry";
+  const timestamp = new Date().toLocaleTimeString();
+  const label = document.createElement("span");
+  label.textContent = `${timestamp} · ${event}`;
+  const detail = document.createElement("div");
+  detail.textContent = JSON.stringify(data);
+  item.appendChild(label);
+  item.appendChild(detail);
+  logsOutput.appendChild(item);
+  logsOutput.scrollTop = logsOutput.scrollHeight;
+}
+
 function setStreamingUI(isStreaming) {
   chatSend.disabled = isStreaming;
-  if (chatStop) {
-    chatStop.disabled = !isStreaming;
-  }
+  chatStop.disabled = !isStreaming;
 }
 
 function stopStreaming() {
   if (activeController) {
     activeController.abort();
     activeController = null;
+    addLogEntry("client_stop", { reason: "user" });
   }
   setStreamingUI(false);
-  updateStatus("done");
+  setStatus("Connected", "connected");
   endStreamMessage();
 }
 
-function handleLogEvent(entry) {
-  appendLog(entry);
-  if (entry.event === "status_update") {
-    updateStatus(entry.data.status);
-  }
-}
-
-function connectWebSocket() {
-  const ws = new WebSocket(`ws://${window.location.host}/ws/logs`);
-
-  ws.addEventListener("open", () => {
-    setStatus("Connected", "connected");
-    ws.send("hello");
-  });
-
-  ws.addEventListener("message", (event) => {
-    const entry = JSON.parse(event.data);
-    handleLogEvent(entry);
-  });
-
-  ws.addEventListener("close", () => {
-    setStatus("Disconnected", "");
-    connectSSE();
-  });
-
-  return ws;
-}
-
-function connectSSE() {
-  const source = new EventSource("/api/logs/stream");
-  source.onmessage = (event) => {
-    const entry = JSON.parse(event.data);
-    handleLogEvent(entry);
-  };
-  source.onerror = () => {
-    setStatus("Disconnected", "");
-  };
-}
-
-async function sendChat() {
-  const message = chatInput.value.trim();
-  if (!message) {
-    return;
-  }
-  resetMemoryUsed();
-  chatSend.disabled = true;
-  hideErrorBanner();
-  appendChat("You", message);
-  chatInput.value = "";
-  activeStreamState = { hasToken: false, hasError: false, hasOutput: false };
-
-  try {
-    const response = await fetch("/api/turn", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message }),
-      signal: activeController.signal,
-    });
-    if (!response.ok) {
-      const errorMessage = await getResponseErrorMessage(response);
-      appendChat("Victus", errorMessage);
-      updateStatus("error");
-      maybeShowMemoryBanner(errorMessage);
-      endStreamMessage();
+function parseSseBuffer(buffer) {
+  const segments = buffer.split("\n\n");
+  const remainder = segments.pop() || "";
+  segments.forEach((segment) => {
+    if (!segment.trim()) {
       return;
     }
-    await readTurnStream(response);
-  } catch (error) {
-    appendChat("Victus", "Network error while contacting server.");
-    updateStatus("error");
-    endStreamMessage();
-  } finally {
-    activeController = null;
-    setStreamingUI(false);
+    const lines = segment.split("\n");
+    let eventType = null;
+    const dataLines = [];
+    lines.forEach((line) => {
+      if (line.startsWith("event:")) {
+        eventType = line.replace(/^event:\s?/, "").trim();
+      }
+      if (line.startsWith("data:")) {
+        dataLines.push(line.replace(/^data:\s?/, ""));
+      }
+    });
+    if (!dataLines.length) {
+      return;
+    }
+    const data = dataLines.join("\n");
+    try {
+      const payload = JSON.parse(data);
+      handleTurnEvent(eventType || payload.event, payload);
+    } catch (error) {
+      addLogEntry("error", { message: "Malformed SSE payload" });
+      setStatus("Error", "error");
+    }
+  });
+  return remainder;
+}
+
+function handleTurnEvent(eventType, payload) {
+  if (!eventType) {
+    return;
+  }
+  if (eventType === "status") {
+    setStatusFromServer(payload.status);
+    addLogEntry("status", { status: payload.status });
+    return;
+  }
+  if (eventType === "token") {
+    const textChunk = payload.text ?? payload.token ?? "";
+    if (textChunk) {
+      appendStreamChunk(textChunk);
+    }
+    return;
+  }
+  if (eventType === "tool_start") {
+    addLogEntry("tool_start", {
+      tool: payload.tool,
+      action: payload.action,
+      args: payload.args,
+    });
+    return;
+  }
+  if (eventType === "tool_done") {
+    addLogEntry("tool_done", {
+      tool: payload.tool,
+      action: payload.action,
+      result: payload.result,
+    });
+    return;
+  }
+  if (eventType === "error") {
+    const message = payload.message || "Request failed.";
+    addLogEntry("error", { message });
+    appendMessage("Victus", message);
+    setStatus("Error", "error");
   }
 }
 
@@ -223,275 +192,95 @@ async function readTurnStream(response) {
   if (buffer.trim()) {
     parseSseBuffer(`${buffer}\n\n`);
   }
-  activeStreamState = null;
-}
-
-function handleTurnEvent(payload) {
-  if (payload.event === "status") {
-    updateStatus(payload.status);
-    appendActivityLog("status", { status: payload.status });
-    return;
-  }
-  if (payload.event === "token") {
-    const textChunk = payload.text ?? payload.token ?? "";
-    if (textChunk) {
-      appendStreamChunk(textChunk);
-    }
-    return;
-  }
-  if (payload.event === "tool_start") {
-    appendActivityLog("tool_start", {
-      tool: payload.tool,
-      action: payload.action,
-      args: payload.args,
-    });
-    appendChat("Victus", formatToolStart(payload));
-    return;
-  }
-  if (payload.event === "tool_done") {
-    appendActivityLog("tool_done", {
-      tool: payload.tool,
-      action: payload.action,
-      result: payload.result,
-    });
-    appendChat("Victus", formatToolResult(payload));
-    if (activeStreamState) {
-      activeStreamState.hasOutput = true;
-    }
-    return;
-  }
-  if (payload.event === "memory_used") {
-    const items = payload.result?.items || [];
-    items.forEach((record) => addMemoryItem(memoryUsed, record));
-    addTimelineEntry("memory_used", `${payload.result?.count || 0} memories`);
-    return;
-  }
-  if (payload.event === "memory_written") {
-    if (payload.result) {
-      addMemoryItem(memoryRecent, payload.result);
-    }
-    addTimelineEntry("memory_written", payload.result?.text || "");
-    return;
-  }
-  if (payload.event === "clarify") {
-    appendChat("Victus", payload.message || "Can you clarify?");
-    endStreamMessage();
-    if (activeStreamState) {
-      activeStreamState.hasOutput = true;
-    }
-    return;
-  }
-  if (payload.event === "error") {
-    const message = payload.message || "Request failed.";
-    appendChat("Victus", message);
-    updateStatus("error");
-    maybeShowMemoryBanner(message);
-    endStreamMessage();
-  }
-  if (payload.event) {
-    appendActivityLog("event", payload);
+  endStreamMessage();
+  if (!statusPill.classList.contains("error")) {
+    setStatus("Done", "connected");
   }
 }
 
-function updateStatus(status) {
-  if (status === "thinking") {
-    setStatus("Thinking…", "busy");
+async function sendChat() {
+  const message = chatInput.value.trim();
+  if (!message) {
     return;
   }
-  if (status === "executing") {
-    setStatus("Executing…", "busy");
-    return;
-  }
-  if (status === "done") {
-    setStatus("Connected", "connected");
-    endStreamMessage();
-    refreshMemoryRecent();
-    refreshFinanceSummary();
-    return;
-  }
-  if (status === "denied") {
-    setStatus("Denied", "denied");
-    endStreamMessage();
-    return;
-  }
-  if (status === "error") {
-    setStatus("Error", "error");
-    endStreamMessage();
-    return;
-  }
-}
 
-async function getResponseErrorMessage(response) {
-  let bodyText = "";
+  appendMessage("You", message);
+  chatInput.value = "";
+  setStatus("Thinking", "busy");
+  setStreamingUI(true);
+  endStreamMessage();
+
+  activeController = new AbortController();
+
   try {
-    bodyText = await response.text();
-  } catch (error) {
-    bodyText = "";
-  }
-  if (response.status === 404) {
-    return "Not Found";
-  }
-  let message = "Error retrieving response.";
-  if (bodyText) {
-    try {
-      const payload = JSON.parse(bodyText);
-      message = payload.detail || payload.message || bodyText;
-    } catch (error) {
-      message = bodyText;
-    }
-  }
-  if (message === "Not Found") {
-    return "Error retrieving response.";
-  }
-  return message;
-}
+    const response = await fetch("/api/turn", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message }),
+      signal: activeController.signal,
+    });
 
-function maybeShowMemoryBanner(message) {
-  if (isOllamaMemoryError(message)) {
-    showErrorBanner(
-      "Ollama memory error detected. Try a smaller model (e.g., phi-2, tinyllama, llama3.2:1b)."
-    );
-  }
-}
-
-function parseSseBuffer(buffer) {
-  const segments = buffer.split("\n\n");
-  const remainder = segments.pop() || "";
-  segments.forEach((segment) => {
-    const dataLines = segment
-      .split("\n")
-      .filter((line) => line.startsWith("data:"));
-    if (!dataLines.length) {
+    if (!response.ok) {
+      const errorText = await response.text();
+      appendMessage("Victus", errorText || "Error retrieving response.");
+      setStatus("Error", "error");
       return;
     }
-    const data = dataLines
-      .map((line) => line.replace(/^data:\s?/, ""))
-      .join("\n");
-    try {
-      const payload = JSON.parse(data);
-      handleTurnEvent(payload);
-    } catch (error) {
-      appendChat("Victus", "Received malformed response from server.");
-      updateStatus("error");
-      endStreamMessage();
+
+    await readTurnStream(response);
+  } catch (error) {
+    if (error.name === "AbortError") {
+      addLogEntry("client_stop", { reason: "aborted" });
+      return;
     }
-  });
-  return remainder;
-}
-
-function formatToolStart(payload) {
-  const action = payload?.action || "task";
-  const toolArgs = payload?.args || {};
-  const argsSummary = Object.values(toolArgs).join(", ");
-  if (argsSummary) {
-    return `Task: ${action}(${argsSummary}) started.`;
+    appendMessage("Victus", "Network error while contacting server.");
+    setStatus("Error", "error");
+  } finally {
+    activeController = null;
+    setStreamingUI(false);
   }
-  return `Task: ${action} started.`;
-}
-
-function formatToolResult(payload) {
-  const error = payload?.result?.error;
-  if (error) {
-    updateStatus("error");
-    maybeShowMemoryBanner(error);
-    return `Task failed: ${error}`;
-  }
-  if (payload?.result?.opened) {
-    return `Task complete: opened ${payload.result.opened}.`;
-  }
-  if (typeof payload?.result === "string") {
-    return `Task complete: ${payload.result}.`;
-  }
-  if (payload?.result?.message) {
-    return `Task complete: ${payload.result.message}.`;
-  }
-  return "Task complete.";
 }
 
 function connectLogsStream() {
-  const source = new EventSource("/api/logs/stream");
-  source.onmessage = (event) => {
-    const entry = JSON.parse(event.data);
-    if (entry.event === "status_update") {
-      updateStatus(entry.data.status);
+  if (logsSource) {
+    logsSource.close();
+  }
+  logsSource = new EventSource("/api/logs/stream");
+
+  logsSource.onopen = () => {
+    setStatus("Connected", "connected");
+  };
+
+  logsSource.onmessage = (event) => {
+    try {
+      const entry = JSON.parse(event.data);
+      if (["status_update", "tool_start", "tool_done", "turn_error"].includes(entry.event)) {
+        addLogEntry(entry.event, entry.data || {});
+      }
+      if (entry.event === "status_update") {
+        setStatusFromServer(entry.data.status);
+      }
+    } catch (error) {
+      addLogEntry("error", { message: "Malformed log payload" });
     }
-    addTimelineEntry(entry.event, JSON.stringify(entry.data || {}));
   };
-  source.onerror = () => {
+
+  logsSource.onerror = () => {
     setStatus("Disconnected", "");
+    if (logsSource) {
+      logsSource.close();
+    }
+    if (!reconnectTimeout) {
+      reconnectTimeout = setTimeout(() => {
+        reconnectTimeout = null;
+        connectLogsStream();
+      }, 1500);
+    }
   };
-}
-
-function setActiveTab(tabName) {
-  document.querySelectorAll(".tab").forEach((button) => {
-    button.classList.toggle("active", button.dataset.tab === tabName);
-  });
-  document.querySelectorAll(".tab-panel").forEach((panel) => {
-    panel.classList.toggle("active", panel.dataset.panel === tabName);
-  });
-}
-
-async function refreshMemoryRecent() {
-  const response = await fetch("/api/memory/recent?limit=6");
-  if (!response.ok) {
-    return;
-  }
-  const payload = await response.json();
-  memoryRecent.innerHTML = "";
-  payload.items.forEach((record) => addMemoryItem(memoryRecent, record));
-}
-
-async function refreshFinanceSummary() {
-  const response = await fetch("/api/finance/summary");
-  if (!response.ok) {
-    return;
-  }
-  const summary = await response.json();
-  financeSummary.innerHTML = `
-    <strong>${summary.month}</strong>
-    <ul>
-      <li>Total income: ${summary.total_income}</li>
-      <li>Total expense: ${summary.total_expense}</li>
-      <li>Net: ${summary.net}</li>
-      <li>Transactions: ${summary.count}</li>
-    </ul>
-  `;
-}
-
-async function handleFinanceSubmit(event) {
-  event.preventDefault();
-  const formData = new FormData(financeForm);
-  const payload = Object.fromEntries(formData.entries());
-  payload.amount = parseFloat(payload.amount);
-  const response = await fetch("/api/finance/transaction", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (!response.ok) {
-    financePreview.textContent = "Unable to save transaction.";
-    return;
-  }
-  const result = await response.json();
-  financePreview.textContent = `Saved: ${result.preview}`;
-  financeForm.reset();
-  refreshFinanceSummary();
-}
-
-async function handleFinanceExport() {
-  const response = await fetch("/api/finance/export?range=month");
-  if (!response.ok) {
-    financeExportOutput.textContent = "Export failed.";
-    return;
-  }
-  const payload = await response.json();
-  financeExportOutput.textContent = payload.markdown || "";
 }
 
 chatSend.addEventListener("click", sendChat);
-if (chatStop) {
-  chatStop.addEventListener("click", stopStreaming);
-}
+chatStop.addEventListener("click", stopStreaming);
 chatInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter" && !event.shiftKey) {
     event.preventDefault();
@@ -506,5 +295,4 @@ document.addEventListener("keydown", (event) => {
 });
 
 setStreamingUI(false);
-
-connectWebSocket();
+connectLogsStream();

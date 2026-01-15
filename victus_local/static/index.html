@@ -11,8 +11,8 @@
       <header class="app-header">
         <div>
           <p class="eyebrow">Victus Local</p>
-          <h1>Unified Assistant Console</h1>
-          <p class="subtitle">Local-only planning, memory, and finance tools</p>
+          <h1>Assistant Console</h1>
+          <p class="subtitle">Conversation streaming + live logs</p>
         </div>
         <div class="status-strip">
           <span class="status-label">Status</span>
@@ -20,15 +20,16 @@
         </div>
       </header>
 
-      <main class="app-main">
-        <section class="panel chat-panel">
+      <main class="app-body">
+        <section class="panel conversation-panel">
           <h2>Conversation</h2>
-          <div class="banner hidden" id="error-banner"></div>
-          <div class="chat-output" id="chat-output">
-            <p class="muted">Ask Victus to plan, remember, or update finance logs.</p>
-          </div>
+          <div class="chat-output" id="chat-output"></div>
           <div class="chat-input">
-            <textarea id="chat-input" rows="3" placeholder="Ask or command Victus..."></textarea>
+            <textarea
+              id="chat-input"
+              rows="3"
+              placeholder="Ask or command Victus..."
+            ></textarea>
             <div class="chat-actions">
               <button id="chat-send">Send</button>
               <button id="chat-stop" class="secondary" disabled>Stop</button>
@@ -36,92 +37,13 @@
           </div>
         </section>
 
-        <aside class="side-panel">
-          <div class="tabs" role="tablist">
-            <button class="tab active" data-tab="activity" role="tab">Activity</button>
-            <button class="tab" data-tab="tools" role="tab">Tools</button>
-            <button class="tab" data-tab="memory" role="tab">Memory</button>
-            <button class="tab" data-tab="finance" role="tab">Finance</button>
-          </div>
-
-          <div class="tab-panels">
-            <section class="tab-panel active" data-panel="activity">
-              <div class="panel-header">
-                <h3>Live Activity</h3>
-                <p class="muted">Events emitted by the turn pipeline</p>
-              </div>
-              <div class="timeline" id="activity-timeline"></div>
-            </section>
-
-            <section class="tab-panel" data-panel="tools">
-              <div class="panel-header">
-                <h3>Tool Calls</h3>
-                <p class="muted">Arguments and results as they stream</p>
-              </div>
-              <div class="tool-log" id="tool-log"></div>
-            </section>
-
-            <section class="tab-panel" data-panel="memory">
-              <div class="panel-header">
-                <h3>Memory</h3>
-                <p class="muted">Recent writes and memories used this turn</p>
-              </div>
-              <div class="memory-section">
-                <h4>Memories used</h4>
-                <div class="memory-list" id="memory-used"></div>
-              </div>
-              <div class="memory-section">
-                <h4>Recent writes</h4>
-                <div class="memory-list" id="memory-recent"></div>
-              </div>
-            </section>
-
-            <section class="tab-panel" data-panel="finance">
-              <div class="panel-header">
-                <h3>Finance Logbook</h3>
-                <p class="muted">Track and export monthly summaries</p>
-              </div>
-              <div class="finance-summary" id="finance-summary">
-                <p class="muted">Loading summary...</p>
-              </div>
-              <form class="finance-form" id="finance-form">
-                <div class="field-row">
-                  <label>
-                    Amount
-                    <input type="number" step="0.01" name="amount" required />
-                  </label>
-                  <label>
-                    Category
-                    <input type="text" name="category" required />
-                  </label>
-                </div>
-                <div class="field-row">
-                  <label>
-                    Date
-                    <input type="date" name="date" />
-                  </label>
-                  <label>
-                    Account
-                    <input type="text" name="account" />
-                  </label>
-                </div>
-                <label>
-                  Note
-                  <input type="text" name="note" />
-                </label>
-                <button type="submit">Add transaction</button>
-                <p class="muted" id="finance-preview"></p>
-              </form>
-              <div class="finance-export">
-                <button id="finance-export">Export monthly logbook</button>
-                <pre class="finance-export-output" id="finance-export-output"></pre>
-              </div>
-            </section>
-          </div>
+        <aside class="panel logs-panel">
+          <h2>Live Logs</h2>
+          <div class="logs-output" id="logs-output"></div>
         </aside>
       </main>
     </div>
 
-    <script src="/static/app.js?v=1"></script>
+    <script src="/static/app.js"></script>
   </body>
 </html>

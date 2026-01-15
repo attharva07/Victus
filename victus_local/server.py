@@ -7,18 +7,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, AsyncIterator, Dict, Optional
 
-from fastapi import Body, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import Body, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from victus.app import VictusApp
 from victus.core.schemas import TurnEvent
-from victus.memory.store import MemoryStore
-
-from .api_finance import router as finance_router
-from .api_memory import create_memory_router
-from .turn_handler import TurnHandler
 from .victus_adapter import build_victus_app
 
 logger = logging.getLogger("victus_local")
@@ -97,10 +92,6 @@ log_hub = LogHub()
 static_dir = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 victus_app = build_victus_app()
-memory_store = MemoryStore()
-turn_handler = TurnHandler(victus_app, memory_store)
-app.include_router(finance_router)
-app.include_router(create_memory_router(memory_store))
 
 
 class TurnRequest(BaseModel):
@@ -118,7 +109,7 @@ async def index() -> FileResponse:
 
 
 @app.post("/api/turn")
-async def turn_endpoint(payload: TurnRequest = Body(...), request: Request) -> StreamingResponse:
+async def turn_endpoint(request: Request, payload: TurnRequest = Body(...)) -> StreamingResponse:
     message = payload.message.strip()
     if not message:
         raise HTTPException(status_code=400, detail="Message is required")
@@ -126,20 +117,17 @@ async def turn_endpoint(payload: TurnRequest = Body(...), request: Request) -> S
     logger.info("TURN received: %s", message[:120])
 
     async def event_stream() -> AsyncIterator[bytes]:
-        first_token_sent = False
         try:
             async for event in victus_app.run_request(message):
                 if await request.is_disconnected():
+                    logger.info("Client disconnected; stopping turn.")
                     break
-                if event.event == "token" and not first_token_sent:
-                    first_token_sent = True
-                    ttft_ms = int((time.monotonic() - start_time) * 1000)
-                    metrics_payload = {"event": "metrics", "ttft_ms": ttft_ms}
-                    await log_hub.emit("info", "metrics", {"ttft_ms": ttft_ms})
-                    yield f"data: {json.dumps(metrics_payload)}\n\n".encode("utf-8")
                 await _forward_event_to_logs(event)
                 data = json.dumps(_event_payload(event))
                 yield f"event: {event.event}\ndata: {data}\n\n".encode("utf-8")
+        except asyncio.CancelledError:
+            logger.info("Turn stream cancelled.")
+            raise
         except Exception as exc:  # noqa: BLE001
             error_event = TurnEvent(event="error", status="error", message=str(exc))
             await _forward_event_to_logs(error_event)
