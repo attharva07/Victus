@@ -90,6 +90,23 @@ function endStreamMessage() {
   streamingText = null;
 }
 
+function setStreamingUI(isStreaming) {
+  chatSend.disabled = isStreaming;
+  if (chatStop) {
+    chatStop.disabled = !isStreaming;
+  }
+}
+
+function stopStreaming() {
+  if (activeController) {
+    activeController.abort();
+    activeController = null;
+  }
+  setStreamingUI(false);
+  updateStatus("done");
+  endStreamMessage();
+}
+
 function handleLogEvent(entry) {
   appendLog(entry);
   if (entry.event === "status_update") {
@@ -145,6 +162,7 @@ async function sendChat() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message }),
+      signal: activeController.signal,
     });
     if (!response.ok) {
       const errorMessage = await getResponseErrorMessage(response);
@@ -160,7 +178,8 @@ async function sendChat() {
     updateStatus("error");
     endStreamMessage();
   } finally {
-    chatSend.disabled = false;
+    activeController = null;
+    setStreamingUI(false);
   }
 }
 
@@ -187,6 +206,7 @@ async function readTurnStream(response) {
 function handleTurnEvent(payload) {
   if (payload.event === "status") {
     updateStatus(payload.status);
+    appendActivityLog("status", { status: payload.status });
     return;
   }
   if (payload.event === "token") {
@@ -231,6 +251,9 @@ function handleTurnEvent(payload) {
     updateStatus("error");
     maybeShowMemoryBanner(message);
     endStreamMessage();
+  }
+  if (payload.event) {
+    appendActivityLog("event", payload);
   }
 }
 
@@ -338,18 +361,32 @@ function formatToolResult(payload) {
   if (payload?.result?.opened) {
     return `Task complete: opened ${payload.result.opened}.`;
   }
-  if (payload?.result) {
-    return `Task complete: ${JSON.stringify(payload.result)}.`;
+  if (typeof payload?.result === "string") {
+    return `Task complete: ${payload.result}.`;
+  }
+  if (payload?.result?.message) {
+    return `Task complete: ${payload.result.message}.`;
   }
   return "Task complete.";
 }
 
 chatSend.addEventListener("click", sendChat);
+if (chatStop) {
+  chatStop.addEventListener("click", stopStreaming);
+}
 chatInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter" && !event.shiftKey) {
     event.preventDefault();
     sendChat();
   }
 });
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    stopStreaming();
+  }
+});
+
+setStreamingUI(false);
 
 connectWebSocket();

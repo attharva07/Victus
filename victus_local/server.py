@@ -110,7 +110,7 @@ async def index() -> FileResponse:
 
 
 @app.post("/api/turn")
-async def turn_endpoint(payload: TurnRequest = Body(...)) -> StreamingResponse:
+async def turn_endpoint(payload: TurnRequest = Body(...), request: Request) -> StreamingResponse:
     message = payload.message.strip()
     if not message:
         raise HTTPException(status_code=400, detail="Message is required")
@@ -118,8 +118,17 @@ async def turn_endpoint(payload: TurnRequest = Body(...)) -> StreamingResponse:
     logger.info("TURN received: %s", message[:120])
 
     async def event_stream() -> AsyncIterator[bytes]:
+        first_token_sent = False
         try:
             async for event in victus_app.run_request(message):
+                if await request.is_disconnected():
+                    break
+                if event.event == "token" and not first_token_sent:
+                    first_token_sent = True
+                    ttft_ms = int((time.monotonic() - start_time) * 1000)
+                    metrics_payload = {"event": "metrics", "ttft_ms": ttft_ms}
+                    await log_hub.emit("info", "metrics", {"ttft_ms": ttft_ms})
+                    yield f"data: {json.dumps(metrics_payload)}\n\n".encode("utf-8")
                 await _forward_event_to_logs(event)
                 data = json.dumps(_event_payload(event))
                 yield f"data: {data}\n\n".encode("utf-8")
