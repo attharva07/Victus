@@ -96,6 +96,33 @@ class TurnHandler:
         return None
 
     @staticmethod
+    def _merge_memory_prompts(v1_prompt: str, v2_prompt: str) -> str:
+        prompts = [prompt for prompt in [v1_prompt, v2_prompt] if prompt.strip()]
+        return "\n\n".join(prompts)
+
+    def _format_v2_memory_prompt(self, message: str) -> str:
+        memories = self.memory_store_v2.search(message, limit=5)
+        if not memories:
+            return ""
+        lines = ["Relevant memory:"]
+        for memory in memories:
+            lines.append(f"- ({memory.type}) {memory.content}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _extract_memory_candidate(text: str) -> Dict[str, Any] | None:
+        for payload in _extract_json_payloads(text):
+            candidate = payload.get("memory_candidate")
+            if not isinstance(candidate, dict):
+                continue
+            try:
+                memory = VictusMemory(**candidate)
+            except Exception:
+                continue
+            return memory.model_dump()
+        return None
+
+    @staticmethod
     def _to_summary(record: MemoryRecord) -> dict:
         return {
             "id": record.id,
