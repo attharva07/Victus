@@ -89,7 +89,7 @@ class LogHub:
 
 app = FastAPI()
 log_hub = LogHub()
-static_dir = Path(__file__).parent / "static"
+static_dir = Path(__file__).parent / "frontend"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 victus_app = build_victus_app()
 
