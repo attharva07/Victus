@@ -172,7 +172,7 @@ async def list_memory() -> MemoryResponse:
 
 @app.post("/memory", response_model=VictusMemory)
 async def upsert_memory(payload: MemoryRequest = Body(...)) -> VictusMemory:
-    data = payload.model_dump()
+    data = payload.model_dump(exclude_none=True)
     if not data.get("created_at"):
         data["created_at"] = datetime.utcnow().isoformat() + "Z"
     memory = VictusMemory(**data)
