@@ -33,6 +33,7 @@ function App() {
   const [sphereState, setSphereState] = useState("idle");
   const [audioActive, setAudioActive] = useState(false);
   const [visualHint, setVisualHint] = useState(null);
+  const [nowPlaying, setNowPlaying] = useState(null);
   const chatInputRef = useRef(null);
   const controllerRef = useRef(null);
   const logsSourceRef = useRef(null);
@@ -251,6 +252,19 @@ function App() {
         result: payload.result,
         event_id: payload.event_id,
       });
+      if (payload.action === "media_play") {
+        const result = payload.result || {};
+        if (result.now_playing) {
+          setNowPlaying({
+            ...result.now_playing,
+            decision: result.decision,
+            confidence: result.confidence,
+            query: result.query,
+          });
+        } else if (result.error || ["clarify", "block"].includes(result.decision)) {
+          setNowPlaying(null);
+        }
+      }
       return;
     }
     if (eventType === "error") {
@@ -418,10 +432,63 @@ function App() {
   const recentMessages = useMemo(() => messages.slice(-4), [messages]);
   const recentLogs = useMemo(() => logs.slice(-5).reverse(), [logs]);
 
+  const stopPlayback = async () => {
+    if (!nowPlaying) {
+      return;
+    }
+    const provider = nowPlaying.provider || "spotify";
+    setNowPlaying(null);
+    if (provider === "spotify") {
+      try {
+        await fetch("/api/media/stop", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ provider }),
+        });
+      } catch (error) {
+        appendLog("error", { message: "Unable to stop Spotify playback." });
+      }
+    }
+  };
+
   const renderDynamicModule = () => {
     if (activeTab === "Home") {
       return (
         <div className="dynamic-list">
+          {nowPlaying ? (
+            <div className="dynamic-card now-playing-card">
+              <div className="now-playing-header">
+                <div>
+                  <h3>Now Playing</h3>
+                  <p className="now-playing-meta">
+                    {nowPlaying.provider?.toUpperCase()} · {nowPlaying.title || nowPlaying.query}
+                  </p>
+                </div>
+                <button className="secondary" onClick={stopPlayback}>
+                  Stop
+                </button>
+              </div>
+              {nowPlaying.provider === "youtube" ? (
+                <iframe
+                  className="now-playing-embed"
+                  src={nowPlaying.embed_url}
+                  title={nowPlaying.title || "YouTube Player"}
+                  allow="autoplay; encrypted-media"
+                  allowFullScreen
+                />
+              ) : (
+                <div className="now-playing-details">
+                  <div>{nowPlaying.title}</div>
+                  {nowPlaying.artist && <div className="now-playing-artist">{nowPlaying.artist}</div>}
+                  {nowPlaying.spotify_url && (
+                    <a href={nowPlaying.spotify_url} target="_blank" rel="noreferrer">
+                      Open in Spotify
+                    </a>
+                  )}
+                </div>
+              )}
+            </div>
+          ) : null}
           <div className="dynamic-card">
             <h3>Chat History</h3>
             <ul>

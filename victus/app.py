@@ -219,10 +219,15 @@ class VictusApp:
             return
 
         error_messages = []
+        assistant_messages = []
         for step in prepared_plan.steps:
             result = results.get(step.id)
             if isinstance(result, dict) and result.get("error"):
                 error_messages.append(str(result["error"]))
+            if isinstance(result, dict):
+                assistant_message = result.get("assistant_message")
+                if isinstance(assistant_message, str) and assistant_message.strip():
+                    assistant_messages.append(assistant_message.strip())
             yield TurnEvent(
                 event="tool_done",
                 tool=step.tool,
@@ -230,6 +235,10 @@ class VictusApp:
                 result=result,
                 step_id=step.id,
             )
+
+        if assistant_messages:
+            combined = "\n".join(assistant_messages)
+            yield TurnEvent(event="token", token=combined, step_id=prepared_plan.steps[0].id)
 
         if error_messages:
             error_message = error_messages[0]

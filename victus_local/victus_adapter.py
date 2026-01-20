@@ -21,6 +21,7 @@ from victus.domains.productivity.plugins.llm_base import LLMClientBase
 from victus.domains.system.system_plugin import SystemPlugin
 
 from .local_plugin import LocalTaskPlugin
+from .media_router import parse_media_action
 
 
 _YOUTUBE_URL_RE = re.compile(r"https?://\\S+")
@@ -39,6 +40,28 @@ def _build_context() -> Context:
 def _local_rule_router(user_text: str, _context: Context) -> Plan | None:
     normalized = user_text.strip()
     lower = normalized.lower()
+    media_action = parse_media_action(normalized)
+    if media_action:
+        return Plan(
+            goal=user_text,
+            domain="productivity",
+            steps=[
+                PlanStep(
+                    id="step-1",
+                    tool="local",
+                    action="media_play",
+                    args={
+                        "provider": media_action.provider,
+                        "query": media_action.query,
+                        "artist": media_action.artist,
+                        "parse_confidence": media_action.parse_confidence,
+                        "parse_reasons": media_action.parse_reasons,
+                    },
+                )
+            ],
+            risk="low",
+            origin="router",
+        )
     if "youtube" in lower:
         url_match = _YOUTUBE_URL_RE.search(normalized)
         if url_match:
@@ -120,10 +143,11 @@ class LocalIntentPlanner:
             "You are an intent planner for a local desktop assistant. "
             "Decide if the user wants a tool action or a chat response. "
             "Allowed tools: open_app (args: name or path), open_youtube (args: query or url), "
+            "media_play (args: provider, query, artist), "
             "finance.add_transaction, finance.list_transactions, finance.month_summary, finance.export_logbook_md. "
             "If you need clarification, ask for it. "
             "Respond with strict JSON only: "
-            "{\"intent\":\"chat|tool|clarify\",\"tool\":null|\"open_app\"|\"open_youtube\"|\"finance\","
+            "{\"intent\":\"chat|tool|clarify\",\"tool\":null|\"open_app\"|\"open_youtube\"|\"media_play\"|\"finance\","
             "\"action\":null|\"add_transaction\"|\"list_transactions\"|\"month_summary\"|\"export_logbook_md\","
             "\"args\":{},\"clarification\":null|\"...\"}.\n"
             f"User: {user_text}"
@@ -146,6 +170,8 @@ class LocalIntentPlanner:
                 return IntentPlan(kind="tool", tool="local", action="open_app", args=data.get("args", {}))
             if tool == "open_youtube":
                 return IntentPlan(kind="tool", tool="local", action="open_youtube", args=data.get("args", {}))
+            if tool == "media_play":
+                return IntentPlan(kind="tool", tool="local", action="media_play", args=data.get("args", {}))
             if tool == "finance" and action in {
                 "add_transaction",
                 "list_transactions",
