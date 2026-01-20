@@ -12,10 +12,11 @@ import asyncio
 from dataclasses import asdict, replace
 from datetime import datetime
 from pathlib import Path
-from typing import Any, AsyncIterator, Callable, Dict, Sequence
+from typing import Any, AsyncIterator, Callable, Dict, Optional, Sequence
 
 from .core.approval import issue_approval
 from .core.audit import AuditLogger
+from .core.confidence import ConfidenceEngine, ConfidenceLogger, ConfidencePlanEvaluation
 from .core.failures import FailureEvent, FailureLogger, hash_stack, safe_user_intent
 from .core.executor import ExecutionEngine
 from .core.planner import Planner
@@ -44,6 +45,8 @@ class VictusApp:
         self.executor = ExecutionEngine(plugins, signature_secret=self.policy_engine.signature_secret)
         self.audit = audit_logger or AuditLogger()
         self.failure_logger = FailureLogger(Path("victus/data/failures"))
+        self.confidence_engine = ConfidenceEngine()
+        self.confidence_logger = ConfidenceLogger(Path("victus/data/confidence"))
         self.context_factory = context_factory or self._default_context
         self.rule_router = rule_router
         self.intent_planner = intent_planner
@@ -156,6 +159,18 @@ class VictusApp:
                         prompt = step.args.get("prompt")
                         if isinstance(prompt, str) and prompt.strip():
                             step.args["prompt"] = f"{memory_prompt}\n\nUser: {prompt}"
+            confidence = self._evaluate_confidence(plan)
+            if confidence.decision == "clarify":
+                yield TurnEvent(event="status", status="done")
+                yield TurnEvent(event="clarify", message=self.confidence_engine.build_clarification(confidence.primary))
+                return
+            if confidence.decision == "block":
+                yield TurnEvent(event="status", status="denied")
+                yield TurnEvent(event="error", message=self.confidence_engine.build_block_message(confidence.primary))
+                return
+            message = self._confidence_message(confidence)
+            if message:
+                yield TurnEvent(event="token", token=message, step_id=plan.steps[0].id)
             prepared_plan, approval = self.request_approval(plan, active_context)
         except PolicyError as exc:
             yield TurnEvent(event="status", status="denied")
@@ -264,6 +279,11 @@ class VictusApp:
                 plan = routed.plan
             else:
                 plan = self.build_plan(goal=user_input, domain=domain, steps=steps)
+            confidence = self._evaluate_confidence(plan)
+            if confidence.decision == "clarify":
+                return {"error": "clarify", "message": self.confidence_engine.build_clarification(confidence.primary)}
+            if confidence.decision == "block":
+                return {"error": "blocked", "message": self.confidence_engine.build_block_message(confidence.primary)}
             prepared_plan, approval = self.request_approval(plan, routed.context)
             results = self.execute_plan(prepared_plan, approval)
             self.audit.log_request(
@@ -303,6 +323,11 @@ class VictusApp:
                 plan = routed.plan
             else:
                 plan = self.build_plan(goal=user_input, domain=domain, steps=steps)
+            confidence = self._evaluate_confidence(plan)
+            if confidence.decision == "clarify":
+                return {"error": "clarify", "message": self.confidence_engine.build_clarification(confidence.primary)}
+            if confidence.decision == "block":
+                return {"error": "blocked", "message": self.confidence_engine.build_block_message(confidence.primary)}
             prepared_plan, approval = self.request_approval(plan, routed.context)
             results = self.execute_plan_streaming(
                 prepared_plan,
@@ -405,3 +430,16 @@ class VictusApp:
     def _serialize_event(event: TurnEvent) -> Dict[str, Any]:
         payload = asdict(event)
         return {key: value for key, value in payload.items() if value is not None}
+
+    def _evaluate_confidence(self, plan: Plan) -> ConfidencePlanEvaluation:
+        evaluation = self.confidence_engine.evaluate_plan(plan)
+        for item in evaluation.evaluations:
+            self.confidence_logger.append(item)
+        return evaluation
+
+    def _confidence_message(self, evaluation: ConfidencePlanEvaluation) -> Optional[str]:
+        if evaluation.decision == "soft_confirm":
+            return self.confidence_engine.build_soft_confirm_message(evaluation.primary)
+        if evaluation.decision == "execute":
+            return self.confidence_engine.build_execute_message(evaluation.primary)
+        return None
