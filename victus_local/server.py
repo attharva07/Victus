@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from victus.app import VictusApp
 from victus.core.schemas import TurnEvent
+from .media_router import run_media_stop
 from .memory_store_v2 import VictusMemory, VictusMemoryStore
 from .turn_handler import TurnHandler
 from .victus_adapter import build_victus_app
@@ -118,6 +119,10 @@ class MemoryResponse(BaseModel):
     items: list[VictusMemory]
 
 
+class MediaStopRequest(BaseModel):
+    provider: str = "spotify"
+
+
 @app.on_event("startup")
 async def startup_event() -> None:
     await log_hub.emit("info", "server_started", {"host": "127.0.0.1"})
@@ -180,6 +185,15 @@ async def upsert_memory(payload: MemoryRequest = Body(...)) -> VictusMemory:
     return memory
 
 
+@app.post("/api/media/stop")
+async def media_stop(payload: MediaStopRequest = Body(...)) -> Dict[str, Any]:
+    provider = payload.provider.strip().lower()
+    result = run_media_stop(provider)
+    if result.get("error"):
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
+
+
 @app.delete("/memory/{memory_id}")
 async def delete_memory(memory_id: str) -> Dict[str, bool]:
     return {"deleted": memory_store_v2.delete(memory_id)}
@@ -238,6 +252,12 @@ async def _forward_event_to_logs(event: TurnEvent) -> None:
             "tool_start",
             {"tool": event.tool, "action": event.action, "args": event.args},
         )
+        if event.action == "media_play":
+            await log_hub.emit(
+                "info",
+                "media_start",
+                {"provider": (event.args or {}).get("provider"), "query": (event.args or {}).get("query")},
+            )
         return
     if event.event == "tool_done":
         _log_tool_done(event.tool, event.result)
@@ -246,6 +266,24 @@ async def _forward_event_to_logs(event: TurnEvent) -> None:
             "tool_done",
             {"tool": event.tool, "action": event.action, "result": event.result},
         )
+        if event.action == "media_play":
+            result = event.result or {}
+            if isinstance(result, dict) and result.get("error"):
+                await log_hub.emit(
+                    "error",
+                    "media_error",
+                    {"message": result.get("error"), "provider": result.get("provider")},
+                )
+            else:
+                await log_hub.emit(
+                    "info",
+                    "media_done",
+                    {
+                        "provider": result.get("provider"),
+                        "now_playing": result.get("now_playing"),
+                        "confidence": result.get("confidence"),
+                    },
+                )
         return
     if event.event == "memory_used":
         await log_hub.emit("info", "memory_used", event.result or {})
