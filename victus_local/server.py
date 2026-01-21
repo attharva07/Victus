@@ -158,7 +158,10 @@ async def turn_endpoint(request: Request, payload: TurnRequest = Body(...)) -> S
     async def event_stream() -> AsyncIterator[bytes]:
         try:
             session_key = _session_key(request)
-            async for event in turn_handler.run_turn(message, session_key):
+            async for event in turn_handler.run_turn(
+                message,
+                context={"session_key": session_key},
+            ):
                 if await request.is_disconnected():
                     logger.info("Client disconnected; stopping turn.")
                     break
@@ -169,7 +172,13 @@ async def turn_endpoint(request: Request, payload: TurnRequest = Body(...)) -> S
             logger.info("Turn stream cancelled.")
             raise
         except Exception as exc:  # noqa: BLE001
-            error_event = TurnEvent(event="error", status="error", message=str(exc))
+            logger.exception("Turn stream failed.")
+            await log_hub.emit("error", "turn_exception", {"message": str(exc)})
+            error_event = TurnEvent(
+                event="error",
+                status="error",
+                message="An internal error occurred. Please try again.",
+            )
             await _forward_event_to_logs(error_event)
             data = json.dumps(_event_payload(error_event))
             yield f"event: {error_event.event}\ndata: {data}\n\n".encode("utf-8")
