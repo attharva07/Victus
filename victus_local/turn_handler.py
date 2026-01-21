@@ -8,6 +8,7 @@ import json
 
 from victus.app import VictusApp
 from victus.core.schemas import Context, Plan, PlanStep, TurnEvent
+from victus.core.llm_health import get_llm_circuit_breaker
 from victus.memory.gate import MemoryGate
 from victus.memory.models import MemoryRecord
 from victus.memory.search import MemorySearch
@@ -40,10 +41,14 @@ class TurnHandler:
         if pending and pending.get("intent") == "local.open_app":
             resolved = self._resolve_pending_open_app(message, pending)
             if resolved:
-                original = str(pending.get("original") or "")
+                requested_alias = resolved.get("requested_alias") or str(pending.get("original") or "")
                 self.pending_action = None
-                async for event in self._run_pending_open_app(message, resolved, original):
+                async for event in self._run_pending_open_app(message, resolved, requested_alias):
                     yield event
+                return
+            if not get_llm_circuit_breaker().allow_request():
+                yield TurnEvent(event="status", status="done")
+                yield TurnEvent(event="token", token=self.app._limited_mode_message(pending_action=True))
                 return
             clarify_message = build_clarify_message(pending.get("candidates") or [])
             yield TurnEvent(event="status", status="done")
@@ -180,20 +185,28 @@ class TurnHandler:
 
     @staticmethod
     def _resolve_pending_open_app(message: str, pending: Dict[str, Any]) -> Optional[Dict[str, str]]:
-        candidates = pending.get("candidates") or []
-        if not isinstance(candidates, list) or not candidates:
+        normalized = message.strip()
+        if not normalized:
             return None
+        candidates = pending.get("candidates") or []
+        if not isinstance(candidates, list):
+            candidates = []
         alias_store = load_alias_store()
         aliases = alias_store.get("aliases", {}) if isinstance(alias_store, dict) else {}
         if not isinstance(aliases, dict):
             aliases = {}
-        return resolve_candidate_choice(message, candidates, aliases)
+        resolved = resolve_candidate_choice(message, candidates, aliases)
+        if resolved:
+            label = resolved.get("label") or resolved.get("target") or normalized
+            target = resolved.get("target") or normalized
+            return {"target": target, "label": label, "requested_alias": label}
+        return {"target": normalized, "label": normalized, "requested_alias": normalized}
 
     async def _run_pending_open_app(
         self,
         message: str,
         resolved: Dict[str, str],
-        original_alias: str,
+        requested_alias: str,
     ) -> AsyncIterator[TurnEvent]:
         plan = Plan(
             goal=message,
@@ -203,7 +216,7 @@ class TurnHandler:
                     id="step-1",
                     tool="local",
                     action="open_app",
-                    args={"name": resolved["target"], "requested_alias": original_alias},
+                    args={"name": resolved["target"], "requested_alias": requested_alias},
                 )
             ],
             risk="low",
