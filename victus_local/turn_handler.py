@@ -31,7 +31,11 @@ class TurnHandler:
         self.memory_store_v2 = memory_store_v2 or VictusMemoryStore()
         self.pending_action: Optional[Dict[str, Any]] = None
 
-    async def run_turn(self, message: str) -> AsyncIterator[TurnEvent]:
+    async def run_turn(
+        self,
+        message: str,
+        context: dict | None = None,
+    ) -> AsyncIterator[TurnEvent]:
         pending = self.pending_action
         if pending and pending.get("intent") == "local.open_app":
             resolved = self._resolve_pending_open_app(message, pending)
