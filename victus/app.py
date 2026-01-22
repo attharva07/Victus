@@ -474,9 +474,11 @@ class VictusApp:
         return any(step.tool == "openai" for step in plan.steps)
 
     @staticmethod
-    def _limited_mode_message() -> str:
+    def _limited_mode_message(*, pending_action: bool = False) -> str:
+        if pending_action:
+            return "LLM is unavailable. Reply with the app name (or a number) to continue."
         return "LLM is unavailable (limited mode). Try a direct command (e.g., 'open calculator')."
 
-    async def _limited_mode_response(self) -> AsyncIterator[TurnEvent]:
+    async def _limited_mode_response(self, *, pending_action: bool = False) -> AsyncIterator[TurnEvent]:
         yield TurnEvent(event="status", status="done")
-        yield TurnEvent(event="token", token=self._limited_mode_message())
+        yield TurnEvent(event="token", token=self._limited_mode_message(pending_action=pending_action))

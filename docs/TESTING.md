@@ -17,3 +17,8 @@ You can also use the provided `Makefile` targets:
 - Do not land behavioral changes without matching tests that capture the expected behavior.
 - Keep `docs/QUALITY_REPORT.md` generated via `python scripts/quality_report.py`; CI uploads it as an artifact on every push/PR.
 - Avoid committing local build artifacts, coverage outputs, or virtual environments; these are ignored via `.gitignore`.
+
+## Manual tests
+- Simulate LLM down (open circuit breaker).
+- Send: "open calculator" → clarify prompt appears.
+- Reply: "calculator" → `local.open_app` executes and pending clears (no loop).
