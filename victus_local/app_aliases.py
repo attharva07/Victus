@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import json
 import re
+import string
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
@@ -19,8 +20,11 @@ _DEFAULT_ALIASES = {
 }
 
 _NORMALIZE_SPACE_RE = re.compile(r"\s+")
+_EDGE_PUNCTUATION = "".join(ch for ch in string.punctuation if ch not in "+-_.")
+_STRIP_EDGE_PUNCT_RE = re.compile(rf"^[{re.escape(_EDGE_PUNCTUATION)}]+|[{re.escape(_EDGE_PUNCTUATION)}]+$")
 _SAFE_ALIAS_RE = re.compile(r"^[a-z0-9 _-]+$")
 _LEARN_BLOCKLIST_RE = re.compile(r"[\"'`]")
+_SUSPICIOUS_ALIAS_RE = re.compile(r"(;|&&|\|\||\||>|<|\b(powershell|cmd)\b|/c)", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -57,12 +61,13 @@ for app in _KNOWN_APPS:
 
 
 def _now_iso() -> str:
-    return datetime.utcnow().isoformat() + "Z"
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def normalize_app_name(value: str) -> str:
     stripped = value.strip()
     stripped = stripped.strip("\"'")
+    stripped = _STRIP_EDGE_PUNCT_RE.sub("", stripped)
     collapsed = _NORMALIZE_SPACE_RE.sub(" ", stripped)
     return collapsed.lower()
 
@@ -138,6 +143,8 @@ def is_learnable_alias(raw_value: str) -> bool:
         return False
     if _LEARN_BLOCKLIST_RE.search(raw_value):
         return False
+    if _SUSPICIOUS_ALIAS_RE.search(raw_value):
+        return False
     if "/" in raw_value or "\\" in raw_value:
         return False
     if ".." in raw_value:
@@ -145,6 +152,10 @@ def is_learnable_alias(raw_value: str) -> bool:
     if ":" in raw_value:
         return False
     return True
+
+
+def list_known_apps() -> List[AppCandidate]:
+    return list(_KNOWN_APPS)
 
 
 def resolve_app_target(requested: str, aliases: Dict[str, str]) -> AppResolution:
@@ -230,3 +241,10 @@ def _label_for_target(target: str) -> Optional[str]:
         if app.target.lower() == target.lower():
             return app.label
     return None
+
+
+def example_candidates(limit: int = 3) -> List[Dict[str, str]]:
+    examples = []
+    for app in _KNOWN_APPS[:limit]:
+        examples.append({"label": app.label, "target": app.target})
+    return examples

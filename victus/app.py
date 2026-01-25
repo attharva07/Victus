@@ -465,8 +465,6 @@ class VictusApp:
     def _confidence_message(self, evaluation: ConfidencePlanEvaluation) -> Optional[str]:
         if evaluation.decision == "soft_confirm":
             return self.confidence_engine.build_soft_confirm_message(evaluation.primary)
-        if evaluation.decision == "execute":
-            return self.confidence_engine.build_execute_message(evaluation.primary)
         return None
 
     @staticmethod

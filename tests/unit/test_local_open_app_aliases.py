@@ -1,22 +1,27 @@
 import json
 
-from victus_local import app_aliases, task_runner
+from victus_local import app_dictionary, task_runner
 
 
 def _configure_alias_store(tmp_path, monkeypatch, aliases=None):
-    seed_path = tmp_path / "app_aliases.seed.json"
-    alias_path = tmp_path / "app_aliases.json"
+    alias_path = tmp_path / "app_dict.json"
     payload = {
+        "canonical": {
+            "calc.exe": {"label": "Calculator", "usage": 0, "last_seen": None},
+            "notepad.exe": {"label": "Notepad", "usage": 0, "last_seen": None},
+            "code.exe": {"label": "VS Code", "usage": 0, "last_seen": None},
+        },
         "aliases": aliases
         or {
-            "calculator": "calc.exe",
-            "notepad": "notepad.exe",
+            "calculator": {"canonical": "calc.exe", "usage": 0, "last_seen": None},
+            "notepad": {"canonical": "notepad.exe", "usage": 0, "last_seen": None},
+            "visual studio code": {"canonical": "code.exe", "usage": 0, "last_seen": None},
         },
+        "candidates": {},
         "updated_at": "1970-01-01T00:00:00Z",
     }
-    seed_path.write_text(json.dumps(payload), encoding="utf-8")
-    monkeypatch.setattr(app_aliases, "_SEED_FILE", seed_path)
-    monkeypatch.setattr(app_aliases, "_ALIAS_FILE", alias_path)
+    alias_path.write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setattr(app_dictionary, "DEFAULT_PATH", alias_path)
     return alias_path
 
 
@@ -60,7 +65,6 @@ def test_open_app_learns_alias_after_success(monkeypatch, tmp_path):
 
     assert opened["target"] == "code.exe"
     assert result["opened"] == "code.exe"
-    assert result["alias_learned"]["alias"] == "visual"
     stored = json.loads(alias_path.read_text(encoding="utf-8"))
-    assert stored["aliases"]["calculator"] == "calc.exe"
-    assert stored["aliases"]["visual"] == "code.exe"
+    assert stored["aliases"]["calculator"]["canonical"] == "calc.exe"
+    assert stored["candidates"]["visual"]["canonical"] == "code.exe"
