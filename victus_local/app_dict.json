@@ -1,0 +1,118 @@
+{
+  "aliases": {
+    "calc": {
+      "canonical": "calc.exe",
+      "last_seen": null,
+      "usage": 0
+    },
+    "calculator": {
+      "canonical": "calc.exe",
+      "last_seen": null,
+      "usage": 0
+    },
+    "cmd": {
+      "canonical": "cmd.exe",
+      "last_seen": null,
+      "usage": 0
+    },
+    "command prompt": {
+      "canonical": "cmd.exe",
+      "last_seen": null,
+      "usage": 0
+    },
+    "mspaint": {
+      "canonical": "mspaint.exe",
+      "last_seen": null,
+      "usage": 0
+    },
+    "notepad": {
+      "canonical": "notepad.exe",
+      "last_seen": null,
+      "usage": 0
+    },
+    "notepad plus plus": {
+      "canonical": "notepad++.exe",
+      "last_seen": null,
+      "usage": 0
+    },
+    "notepad++": {
+      "canonical": "notepad++.exe",
+      "last_seen": null,
+      "usage": 0
+    },
+    "paint": {
+      "canonical": "mspaint.exe",
+      "last_seen": null,
+      "usage": 0
+    },
+    "powershell": {
+      "canonical": "powershell.exe",
+      "last_seen": null,
+      "usage": 0
+    },
+    "pwsh": {
+      "canonical": "powershell.exe",
+      "last_seen": null,
+      "usage": 0
+    },
+    "visual studio code": {
+      "canonical": "code.exe",
+      "last_seen": null,
+      "usage": 0
+    },
+    "vs code": {
+      "canonical": "code.exe",
+      "last_seen": null,
+      "usage": 0
+    },
+    "vscode": {
+      "canonical": "code.exe",
+      "last_seen": null,
+      "usage": 0
+    },
+    "windows powershell": {
+      "canonical": "powershell.exe",
+      "last_seen": null,
+      "usage": 0
+    }
+  },
+  "canonical": {
+    "calc.exe": {
+      "label": "Calculator",
+      "last_seen": null,
+      "usage": 0
+    },
+    "cmd.exe": {
+      "label": "Command Prompt",
+      "last_seen": null,
+      "usage": 0
+    },
+    "code.exe": {
+      "label": "VS Code",
+      "last_seen": null,
+      "usage": 0
+    },
+    "mspaint.exe": {
+      "label": "Paint",
+      "last_seen": null,
+      "usage": 0
+    },
+    "notepad++.exe": {
+      "label": "Notepad++",
+      "last_seen": null,
+      "usage": 0
+    },
+    "notepad.exe": {
+      "label": "Notepad",
+      "last_seen": null,
+      "usage": 0
+    },
+    "powershell.exe": {
+      "label": "PowerShell",
+      "last_seen": null,
+      "usage": 0
+    }
+  },
+  "candidates": {},
+  "updated_at": "2024-01-01T00:00:00Z"
+}

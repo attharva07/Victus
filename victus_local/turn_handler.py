@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import time
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, AsyncIterator, Dict, List, Optional
 
@@ -14,8 +16,26 @@ from victus.memory.models import MemoryRecord
 from victus.memory.search import MemorySearch
 from victus.memory.store import MemoryStore
 
-from .app_aliases import build_clarify_message, load_alias_store, resolve_candidate_choice
+from .app_aliases import build_clarify_message, resolve_candidate_choice
+from .app_dictionary import load_app_dictionary
 from .memory_store_v2 import VictusMemory, VictusMemoryStore
+
+
+@dataclass
+class SessionState:
+    pending_tool: Optional[str] = None
+    awaiting_slot: Optional[str] = None
+    pending_slots: Dict[str, str] = field(default_factory=dict)
+    pending_candidates: List[Dict[str, str]] = field(default_factory=list)
+    pending_original: str = ""
+    last_user_signature: Optional[str] = None
+
+    def clear_pending(self) -> None:
+        self.pending_tool = None
+        self.awaiting_slot = None
+        self.pending_slots = {}
+        self.pending_candidates = []
+        self.pending_original = ""
 
 
 class TurnHandler:
@@ -30,27 +50,29 @@ class TurnHandler:
         self.search = MemorySearch(self.store)
         self.gate = MemoryGate()
         self.memory_store_v2 = memory_store_v2 or VictusMemoryStore()
-        self.pending_action: Optional[Dict[str, Any]] = None
+        self.sessions: Dict[str, SessionState] = {}
 
     async def run_turn(
         self,
         message: str,
         context: dict | None = None,
     ) -> AsyncIterator[TurnEvent]:
-        pending = self.pending_action
-        if pending and pending.get("intent") == "local.open_app":
-            resolved = self._resolve_pending_open_app(message, pending)
+        session_state = self._get_session_state(context or {})
+        signature = self._message_signature(message)
+        if session_state.last_user_signature == signature:
+            yield TurnEvent(event="status", status="done")
+            return
+        session_state.last_user_signature = signature
+
+        if session_state.awaiting_slot == "app_name" and session_state.pending_tool == "local.open_app":
+            resolved = self._resolve_pending_open_app(message, session_state)
             if resolved:
-                requested_alias = resolved.get("requested_alias") or str(pending.get("original") or "")
-                self.pending_action = None
+                requested_alias = resolved.get("requested_alias") or session_state.pending_original
+                session_state.clear_pending()
                 async for event in self._run_pending_open_app(message, resolved, requested_alias):
                     yield event
                 return
-            if not get_llm_circuit_breaker().allow_request():
-                yield TurnEvent(event="status", status="done")
-                yield TurnEvent(event="token", token=self.app._limited_mode_message(pending_action=True))
-                return
-            clarify_message = build_clarify_message(pending.get("candidates") or [])
+            clarify_message = build_clarify_message(session_state.pending_candidates)
             yield TurnEvent(event="status", status="done")
             yield TurnEvent(event="clarify", message=clarify_message)
             return
@@ -72,7 +94,10 @@ class TurnHandler:
             if event.event == "token" and event.token:
                 streamed_text += event.token
             if event.event == "tool_done" and event.action == "open_app":
-                self._maybe_store_pending_action(event)
+                self._maybe_store_pending_action(event, session_state)
+            if event.event == "clarify" and event.message:
+                if event.message.strip().lower().startswith("which app should i open"):
+                    self._set_pending_open_app(session_state, [], "")
             yield event
 
         candidate = self._extract_memory_candidate(streamed_text)
@@ -166,7 +191,7 @@ class TurnHandler:
             "pii_risk": record.pii_risk,
         }
 
-    def _maybe_store_pending_action(self, event: TurnEvent) -> None:
+    def _maybe_store_pending_action(self, event: TurnEvent, session_state: SessionState) -> None:
         result = event.result or {}
         if not isinstance(result, dict):
             return
@@ -175,32 +200,53 @@ class TurnHandler:
         candidates = result.get("candidates")
         if not isinstance(candidates, list) or not candidates:
             return
-        self.pending_action = {
-            "intent": "local.open_app",
-            "candidates": candidates,
-            "missing_field": "app_name",
-            "original": result.get("original") or "",
-            "created_at": datetime.utcnow().isoformat() + "Z",
-        }
+        self._set_pending_open_app(
+            session_state,
+            candidates,
+            str(result.get("original") or ""),
+        )
+
+    def _set_pending_open_app(
+        self,
+        session_state: SessionState,
+        candidates: List[Dict[str, str]],
+        original: str,
+    ) -> None:
+        session_state.pending_tool = "local.open_app"
+        session_state.awaiting_slot = "app_name"
+        session_state.pending_slots = {"app_name": ""}
+        session_state.pending_candidates = candidates
+        session_state.pending_original = original
 
     @staticmethod
-    def _resolve_pending_open_app(message: str, pending: Dict[str, Any]) -> Optional[Dict[str, str]]:
+    def _resolve_pending_open_app(message: str, session_state: SessionState) -> Optional[Dict[str, str]]:
         normalized = message.strip()
         if not normalized:
             return None
-        candidates = pending.get("candidates") or []
-        if not isinstance(candidates, list):
-            candidates = []
-        alias_store = load_alias_store()
-        aliases = alias_store.get("aliases", {}) if isinstance(alias_store, dict) else {}
-        if not isinstance(aliases, dict):
-            aliases = {}
+        candidates = session_state.pending_candidates or []
+        dictionary = load_app_dictionary()
+        aliases = dictionary.alias_map()
         resolved = resolve_candidate_choice(message, candidates, aliases)
         if resolved:
             label = resolved.get("label") or resolved.get("target") or normalized
             target = resolved.get("target") or normalized
-            return {"target": target, "label": label, "requested_alias": label}
+            requested_alias = label if normalized.isdigit() else normalized
+            return {"target": target, "label": label, "requested_alias": requested_alias}
         return {"target": normalized, "label": normalized, "requested_alias": normalized}
+
+    def _get_session_state(self, context: Dict[str, Any]) -> SessionState:
+        session_key = context.get("session_key") or "default"
+        state = self.sessions.get(session_key)
+        if not state:
+            state = SessionState()
+            self.sessions[session_key] = state
+        return state
+
+    @staticmethod
+    def _message_signature(message: str) -> str:
+        normalized = message.strip().lower()
+        bucket = int(time.time() / 2)
+        return f"{normalized}:{bucket}"
 
     async def _run_pending_open_app(
         self,
