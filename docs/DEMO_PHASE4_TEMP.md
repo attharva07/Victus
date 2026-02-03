@@ -9,7 +9,7 @@ pip install PySide6
 
 ## Run
 ```bash
-python run_ui_temp.py
+python experiments/run_ui_temp.py
 ```
 
 ## Controls
