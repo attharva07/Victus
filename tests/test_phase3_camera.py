@@ -3,14 +3,16 @@ from __future__ import annotations
 import importlib
 from pathlib import Path
 
+import bcrypt
 import pytest
 from fastapi.testclient import TestClient
 
+from core.security.bootstrap_store import set_bootstrap
 
 def _client_with_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, enabled: bool) -> TestClient:
     monkeypatch.setenv("VICTUS_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("VICTUS_LOCAL_ADMIN_USERNAME", "admin")
-    monkeypatch.setenv("VICTUS_LOCAL_ADMIN_PASSWORD", "testpass")
+    password_hash = bcrypt.hashpw(b"testpass", bcrypt.gensalt()).decode("utf-8")
+    set_bootstrap(password_hash, "test-secret")
     monkeypatch.setenv("VICTUS_CAMERA_ENABLED", "true" if enabled else "false")
     monkeypatch.setenv("VICTUS_CAMERA_BACKEND", "stub")
     monkeypatch.setenv("VICTUS_CAMERA_MAX_IMAGE_BYTES", "2000000")

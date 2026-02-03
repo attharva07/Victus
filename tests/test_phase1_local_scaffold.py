@@ -4,10 +4,12 @@ import importlib
 import os
 from pathlib import Path
 
+import bcrypt
 import pytest
 from fastapi.testclient import TestClient
 
 from core.config import ensure_directories
+from core.security.bootstrap_store import set_bootstrap
 from core.vault.sandbox import VaultPathError, safe_join
 
 
@@ -43,8 +45,8 @@ def test_vault_path_safety(tmp_path: Path) -> None:
 
 def _client_with_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> TestClient:
     monkeypatch.setenv("VICTUS_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("VICTUS_LOCAL_ADMIN_USERNAME", "admin")
-    monkeypatch.setenv("VICTUS_LOCAL_ADMIN_PASSWORD", "testpass")
+    password_hash = bcrypt.hashpw(b"testpass", bcrypt.gensalt()).decode("utf-8")
+    set_bootstrap(password_hash, "test-secret")
     local_main = importlib.reload(importlib.import_module("apps.local.main"))
     return TestClient(local_main.create_app())
 

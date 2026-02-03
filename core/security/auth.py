@@ -2,24 +2,16 @@ from __future__ import annotations
 
 import base64
 import json
-import os
 import secrets
 import time
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Optional
 
 import bcrypt
 from fastapi import Depends, HTTPException, Request, status
 
-from core.config import ensure_directories
 from core.logging.audit import audit_event
-
-
-@dataclass(frozen=True)
-class AdminAccount:
-    username: str
-    password_hash: str
+from core.security.bootstrap_store import get_jwt_secret, is_bootstrapped, verify_admin_password
 
 
 @dataclass(frozen=True)
@@ -29,44 +21,10 @@ class TokenPayload:
     exp: int
 
 
-def _admin_file() -> Path:
-    paths = ensure_directories()
-    return paths.data_dir / "admin.json"
-
-
-def _token_secret_file() -> Path:
-    paths = ensure_directories()
-    return paths.data_dir / "token_secret"
-
-
-def _load_or_create_admin() -> AdminAccount:
-    admin_path = _admin_file()
-    if admin_path.exists():
-        data = json.loads(admin_path.read_text())
-        return AdminAccount(username=data["username"], password_hash=data["password_hash"])
-    username = os.getenv("VICTUS_LOCAL_ADMIN_USERNAME", "admin")
-    password = os.getenv("VICTUS_LOCAL_ADMIN_PASSWORD", "admin")
-    password_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
-    admin_path.write_text(json.dumps({"username": username, "password_hash": password_hash}))
-    return AdminAccount(username=username, password_hash=password_hash)
-
-
-def _load_or_create_secret() -> str:
-    secret_path = _token_secret_file()
-    if secret_path.exists():
-        return secret_path.read_text().strip()
-    secret = secrets.token_urlsafe(32)
-    secret_path.write_text(secret)
-    return secret
-
-
-def verify_password(password: str, password_hash: str) -> bool:
-    return bcrypt.checkpw(password.encode("utf-8"), password_hash.encode("utf-8"))
-
-
 def authenticate(username: str, password: str) -> bool:
-    account = _load_or_create_admin()
-    return username == account.username and verify_password(password, account.password_hash)
+    if not is_bootstrapped():
+        return False
+    return username == "admin" and verify_admin_password(password)
 
 
 def _encode_payload(payload: TokenPayload, secret: str) -> str:
@@ -105,12 +63,14 @@ def _decode_payload(token: str, secret: str) -> Optional[TokenPayload]:
 def create_token(username: str, expires_in: int = 3600) -> str:
     now = int(time.time())
     payload = TokenPayload(sub=username, iat=now, exp=now + expires_in)
-    secret = _load_or_create_secret()
+    secret = get_jwt_secret()
     return _encode_payload(payload, secret)
 
 
 def verify_token(token: str) -> Optional[TokenPayload]:
-    secret = _load_or_create_secret()
+    if not is_bootstrapped():
+        return None
+    secret = get_jwt_secret()
     payload = _decode_payload(token, secret)
     if payload is None:
         return None
@@ -135,6 +95,14 @@ def require_user(user: str = Depends(get_current_user)) -> str:
 
 
 def login_user(username: str, password: str) -> str:
+    if not is_bootstrapped():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": "not_bootstrapped",
+                "message": "Run `python -m apps.local.bootstrap` to initialize Victus Local.",
+            },
+        )
     if not authenticate(username, password):
         audit_event("auth_failed", username=username)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
