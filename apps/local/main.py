@@ -16,6 +16,7 @@ from core.memory.service import add_memory, delete_memory, list_recent, search_m
 from core.orchestrator.router import route_intent
 from core.orchestrator.schemas import OrchestrateRequest, OrchestrateResponse
 from core.security.auth import login_user, require_user
+from core.security.bootstrap_store import is_bootstrapped
 
 
 class LoginRequest(BaseModel):
@@ -80,6 +81,10 @@ def create_app() -> FastAPI:
     def login(payload: LoginRequest) -> LoginResponse:
         token = login_user(payload.username, payload.password)
         return LoginResponse(access_token=token)
+
+    @app.get("/bootstrap/status")
+    def bootstrap_status() -> dict[str, bool]:
+        return {"bootstrapped": is_bootstrapped()}
 
     @app.get("/me")
     def me(user: str = Depends(require_user)) -> dict[str, str]:

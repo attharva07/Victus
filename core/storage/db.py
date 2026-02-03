@@ -48,6 +48,18 @@ def init_db() -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS bootstrap_state (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                bootstrapped INTEGER NOT NULL,
+                admin_username TEXT NOT NULL,
+                admin_password_hash TEXT NOT NULL,
+                jwt_secret TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
         conn.commit()
         _DB_INITIALIZED.add(db_path)
     finally:
