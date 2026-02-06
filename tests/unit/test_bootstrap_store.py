@@ -56,3 +56,41 @@ def test_login_succeeds_after_bootstrap(
     response = client.post("/login", json={"username": "admin", "password": "strong-password"})
     assert response.status_code == 200
     assert "access_token" in response.json()
+
+
+def test_bootstrap_init_flow(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    client = _client(monkeypatch, tmp_path)
+
+    status_before = client.get("/bootstrap/status")
+    assert status_before.status_code == 200
+    assert status_before.json()["bootstrapped"] is False
+
+    init_response = client.post(
+        "/bootstrap/init",
+        json={"username": "admin", "password": "super-strong-123"},
+    )
+    assert init_response.status_code == 200
+    assert init_response.json() == {"ok": True, "bootstrapped": True}
+
+    status_after = client.get("/bootstrap/status")
+    assert status_after.status_code == 200
+    assert status_after.json()["bootstrapped"] is True
+
+
+def test_bootstrap_init_rejected_when_already_bootstrapped(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    client = _client(monkeypatch, tmp_path)
+    first = client.post(
+        "/bootstrap/init",
+        json={"username": "admin", "password": "super-strong-123"},
+    )
+    assert first.status_code == 200
+
+    second = client.post(
+        "/bootstrap/init",
+        json={"username": "admin", "password": "another-strong-123"},
+    )
+    assert second.status_code == 409
+    payload = second.json()
+    assert payload["detail"]["error"] == "already_bootstrapped"

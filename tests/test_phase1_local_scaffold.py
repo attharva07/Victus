@@ -64,7 +64,21 @@ def test_me_requires_auth(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> No
     assert response.status_code == 401
 
 
-def test_orchestrate_returns_intent(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_orchestrate_known_memory_intent(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    client = _client_with_env(monkeypatch, tmp_path)
+    login = client.post("/login", json={"username": "admin", "password": "testpass"})
+    token = login.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+    response = client.post("/orchestrate", json={"text": "remember hello layer2"}, headers=headers)
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["intent"]["action"] == "memory.add"
+    assert payload["actions"]
+
+
+def test_orchestrate_unknown_intent_returns_structured_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     client = _client_with_env(monkeypatch, tmp_path)
     login = client.post("/login", json={"username": "admin", "password": "testpass"})
     token = login.json()["access_token"]
@@ -72,5 +86,4 @@ def test_orchestrate_returns_intent(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     response = client.post("/orchestrate", json={"utterance": "hello"}, headers=headers)
     assert response.status_code == 200
     payload = response.json()
-    assert payload["intent"]["action"] == "noop"
-    assert "Phase 1" in payload["message"]
+    assert payload["error"] in {"clarify", "unknown_intent"}

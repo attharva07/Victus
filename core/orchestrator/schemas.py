@@ -1,12 +1,22 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Literal, List
+from typing import Any, Dict, List, Literal
 
 from pydantic import BaseModel, Field
 
 
 class OrchestrateRequest(BaseModel):
-    utterance: str = Field(..., min_length=1)
+    utterance: str | None = Field(default=None, min_length=1)
+    text: str | None = Field(default=None, min_length=1)
+    domain: str | None = None
+    context: Dict[str, Any] = Field(default_factory=dict)
+
+    def normalized_text(self) -> str:
+        if self.text:
+            return self.text
+        if self.utterance:
+            return self.utterance
+        raise ValueError("Either 'text' or 'utterance' is required.")
 
 
 class Intent(BaseModel):
@@ -40,3 +50,10 @@ class OrchestrateResponse(BaseModel):
     intent: Intent
     message: str
     actions: List[ActionResult] = Field(default_factory=list)
+
+
+class OrchestrateErrorResponse(BaseModel):
+    error: Literal["clarify", "unknown_intent"]
+    message: str
+    fields: Dict[str, Any] | None = None
+    candidates: List[str] | None = None

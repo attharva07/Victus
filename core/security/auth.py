@@ -100,7 +100,7 @@ def login_user(username: str, password: str) -> str:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={
                 "error": "not_bootstrapped",
-                "message": "Run `python -m apps.local.bootstrap` to initialize Victus Local.",
+                "message": "Call POST /bootstrap/init (or run `python -m apps.local.bootstrap`) to initialize Victus Local.",
             },
         )
     if not authenticate(username, password):

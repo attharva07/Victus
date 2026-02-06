@@ -3,17 +3,24 @@ from __future__ import annotations
 from adapters.llm.provider import LLMProvider
 from core.camera.errors import CameraError
 from core.camera.service import CameraService
+from core.config import get_orchestrator_config
 from core.filesystem.service import list_sandbox_files, read_sandbox_file, write_sandbox_file
 from core.finance.service import add_transaction, list_transactions, summary
 from core.logging.audit import audit_event
 from core.memory.service import add_memory, delete_memory, list_recent, search_memories
-from core.orchestrator.deterministic import looks_like_finance, parse_intent
+from core.orchestrator.deterministic import parse_intent
 from core.orchestrator.policy import validate_intent
-from core.orchestrator.schemas import ActionResult, Intent, OrchestrateRequest, OrchestrateResponse
+from core.orchestrator.schemas import (
+    ActionResult,
+    Intent,
+    OrchestrateErrorResponse,
+    OrchestrateRequest,
+    OrchestrateResponse,
+)
 
 
 def _deterministic_route(request: OrchestrateRequest) -> Intent | None:
-    return parse_intent(request.utterance)
+    return parse_intent(request.normalized_text())
 
 
 def _execute_intent(intent: Intent) -> tuple[str, list[ActionResult]]:
@@ -41,7 +48,7 @@ def _execute_intent(intent: Intent) -> tuple[str, list[ActionResult]]:
             result = ActionResult(action=action, parameters=params, result={"error": str(exc)})
             return str(exc), [result]
         result = ActionResult(action=action, parameters=params, result=recognition.model_dump())
-        return f"Detected {recognition.faces_detected} faces.", [result]
+        return f"Detected {len(recognition.matches)} faces.", [result]
     if action == "memory.add":
         memory_id = add_memory(content=params["content"])
         audit_event("orchestrate_memory_add", memory_id=memory_id)
@@ -102,21 +109,35 @@ def _execute_intent(intent: Intent) -> tuple[str, list[ActionResult]]:
     return "No action executed.", []
 
 
-def route_intent(request: OrchestrateRequest, llm_provider: LLMProvider) -> OrchestrateResponse:
+def route_intent(
+    request: OrchestrateRequest, llm_provider: LLMProvider
+) -> OrchestrateResponse | OrchestrateErrorResponse:
     intent = _deterministic_route(request)
     if intent is None:
-        proposed = llm_provider.propose_intent(request)
-        if proposed is None or proposed.confidence < 0.7:
-            intent = Intent(action="noop", parameters={}, confidence=0.0)
-            message = "Phase 1 scaffold: no actions executed."
-            if looks_like_finance(request.utterance):
-                message = "I need more detail to record that transaction."
-            return OrchestrateResponse(intent=intent, message=message, actions=[])
-        intent = proposed
+        config = get_orchestrator_config()
+        if config.enable_llm_fallback:
+            proposed = llm_provider.propose_intent(request)
+            if proposed is not None and proposed.confidence >= 0.7:
+                intent = proposed
+        if intent is None:
+            text = request.normalized_text().strip()
+            if len(text.split()) < 3:
+                return OrchestrateErrorResponse(
+                    error="clarify",
+                    message="Please provide more detail so I can route this deterministically.",
+                    fields={"text": "include an explicit action and target"},
+                )
+            return OrchestrateErrorResponse(
+                error="unknown_intent",
+                message="I could not deterministically map that request to a supported action.",
+                candidates=["memory", "finance", "files", "camera"],
+            )
     intent = validate_intent(intent)
     if intent.action == "noop":
-        return OrchestrateResponse(
-            intent=intent, message="Phase 1 scaffold: no actions executed.", actions=[]
+        return OrchestrateErrorResponse(
+            error="unknown_intent",
+            message="I could not deterministically map that request to a supported action.",
+            candidates=["memory", "finance", "files", "camera"],
         )
     message, actions = _execute_intent(intent)
     return OrchestrateResponse(intent=intent, message=message, actions=actions)
