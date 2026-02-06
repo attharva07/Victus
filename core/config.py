@@ -24,6 +24,11 @@ class CameraConfig:
     max_dim: int
 
 
+@dataclass(frozen=True)
+class OrchestratorConfig:
+    enable_llm_fallback: bool
+
+
 def _default_base_dir() -> Path:
     override = os.getenv("VICTUS_DATA_DIR")
     if override:
@@ -99,4 +104,10 @@ def get_camera_config() -> CameraConfig:
         device_index=device_index,
         max_image_bytes=max_image_bytes,
         max_dim=max_dim,
+    )
+
+
+def get_orchestrator_config() -> OrchestratorConfig:
+    return OrchestratorConfig(
+        enable_llm_fallback=_parse_bool(os.getenv("VICTUS_ENABLE_LLM_FALLBACK"), False)
     )

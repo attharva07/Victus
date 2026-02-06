@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import base64
+import secrets
+
+import bcrypt
 from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request, status
 from pydantic import BaseModel
 
@@ -14,14 +18,24 @@ from core.logging.audit import audit_event
 from core.logging.logger import get_logger
 from core.memory.service import add_memory, delete_memory, list_recent, search_memories
 from core.orchestrator.router import route_intent
-from core.orchestrator.schemas import OrchestrateRequest, OrchestrateResponse
+from core.orchestrator.schemas import OrchestrateErrorResponse, OrchestrateRequest, OrchestrateResponse
 from core.security.auth import login_user, require_user
-from core.security.bootstrap_store import is_bootstrapped
+from core.security.bootstrap_store import is_bootstrapped, set_bootstrap
 
 
 class LoginRequest(BaseModel):
     username: str
     password: str
+
+
+class BootstrapInitRequest(BaseModel):
+    username: str
+    password: str
+
+
+class BootstrapInitResponse(BaseModel):
+    ok: bool
+    bootstrapped: bool
 
 
 class LoginResponse(BaseModel):
@@ -86,15 +100,51 @@ def create_app() -> FastAPI:
     def bootstrap_status() -> dict[str, bool]:
         return {"bootstrapped": is_bootstrapped()}
 
+    @app.post("/bootstrap/init", response_model=BootstrapInitResponse)
+    def bootstrap_init(payload: BootstrapInitRequest, request: Request) -> BootstrapInitResponse:
+        request_id = _request_id(request)
+        if is_bootstrapped():
+            audit_event("bootstrap_init", ok=False, request_id=request_id, reason="already_bootstrapped")
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "error": "already_bootstrapped",
+                    "message": "Victus Local has already been bootstrapped.",
+                },
+            )
+        if payload.username != "admin":
+            audit_event("bootstrap_init", ok=False, request_id=request_id, reason="invalid_username")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error": "invalid_username", "message": "Only the 'admin' username is allowed."},
+            )
+        if len(payload.password) < 12:
+            audit_event("bootstrap_init", ok=False, request_id=request_id, reason="weak_password")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error": "weak_password", "message": "Password must be at least 12 characters."},
+            )
+
+        password_hash = bcrypt.hashpw(payload.password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+        secret_bytes = secrets.token_bytes(32)
+        jwt_secret = base64.urlsafe_b64encode(secret_bytes).decode("utf-8")
+        set_bootstrap(password_hash, jwt_secret)
+        audit_event("bootstrap_init", ok=True, request_id=request_id, username=payload.username)
+        return BootstrapInitResponse(ok=True, bootstrapped=True)
+
     @app.get("/me")
     def me(user: str = Depends(require_user)) -> dict[str, str]:
         return {"username": user}
 
-    @app.post("/orchestrate", response_model=OrchestrateResponse)
+    @app.post(
+        "/orchestrate",
+        response_model=OrchestrateResponse | OrchestrateErrorResponse,
+        responses={200: {"model": OrchestrateErrorResponse}},
+    )
     def orchestrate(
         payload: OrchestrateRequest, user: str = Depends(require_user)
-    ) -> OrchestrateResponse:
-        audit_event("orchestrate_requested", username=user, utterance=payload.utterance)
+    ) -> OrchestrateResponse | OrchestrateErrorResponse:
+        audit_event("orchestrate_requested", username=user, utterance=payload.normalized_text())
         return route_intent(payload, llm_provider)
 
     @app.post("/memory/add")
