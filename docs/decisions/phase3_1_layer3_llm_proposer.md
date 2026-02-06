@@ -41,6 +41,15 @@ Auto-exec is allowed only when all are true:
 - `VICTUS_LLM_PROVIDER` (default `stub`)
 - `VICTUS_LLM_ALLOW_AUTOEXEC` (default `false`)
 - `VICTUS_LLM_AUTOEXEC_MIN_CONFIDENCE` (default `0.90`)
+- `VICTUS_OLLAMA_BASE_URL` (default `http://127.0.0.1:11434`)
+- `VICTUS_LLM_MODEL` (default `llama3.1:latest`)
+
+Ollama proposer behavior:
+
+- When `VICTUS_LLM_PROVIDER=ollama`, Layer 3 sends a JSON-only prompt to `POST /api/generate`.
+- The model must return strict JSON with shape `{ok, confidence, action, args, reason, raw}`.
+- On connectivity issues, proposer returns `ok=false` with reason `ollama_unreachable`.
+- On non-JSON / invalid JSON responses, proposer returns `ok=false` with reason `ollama_invalid_json`.
 
 Legacy compatibility:
 
