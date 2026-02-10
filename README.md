@@ -47,6 +47,16 @@ Key guarantees:
    ```
 5. Open <http://127.0.0.1:8000> to view the React dashboard with the audio-reactive Three.js sphere and dynamic module container placeholders.
 
+
+### Phase 4 web UI (Vite)
+A desktop-first Phase 4 dashboard is available under `web-ui/`:
+```bash
+cd web-ui
+npm install
+npm run dev
+```
+Configure backend base URL with `VITE_API_BASE_URL` (defaults to `http://127.0.0.1:8000`).
+
 ## Streaming behavior
 `POST /api/turn` returns `text/event-stream` and emits structured events:
 - `status`: `thinking | executing | done | denied | error`
