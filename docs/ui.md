@@ -1,20 +1,15 @@
-# Victus UI
+# UI Status
 
-## Layout contract
-- Fixed navbar with Victus Local logo, tabs, and status pill
-- Row 1 panels: Conversation (left), Three.js sphere (center), Live Logs (right)
-- Row 2 panels: Dynamic Module (left, content swaps per tab), Recent Activity (right)
+The in-repository UI paths were removed during repository cleanup to keep a single unambiguous run path.
 
-## Dynamic module behavior
-- Home: chat history + recent interactions summary
-- Memory/Finance/Settings: placeholders only (future-ready)
+## Current status
+- No maintained frontend is bundled in this repository.
+- The supported runtime target is the backend API in `apps/local/main.py`.
 
-## Three.js sphere
-- React-owned container with Three.js canvas inside
-- Web Audio amplitude drives scale and glow
-- Context-aware hints activate only when `visual_hint` metadata is provided for long responses
+## Why
+Multiple UI implementations existed with different API expectations and startup commands, which created a misleading and non-deterministic developer experience.
 
-## Data feeds
-- `POST /api/turn` (SSE) for streaming tokens and turn events
-- `GET /api/logs/stream` for global event logs
-- Finance routes for summaries and exports (placeholders only)
+## If you need a UI
+Build a client against the backend OpenAPI contract served by:
+- `GET /openapi.json`
+- `GET /docs`
