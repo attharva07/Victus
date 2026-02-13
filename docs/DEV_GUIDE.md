@@ -12,6 +12,7 @@ This guide is the authoritative operating manual for Codex development. Follow i
 ### Unified turn pipeline (local web UI)
 - `VictusApp.run_request` streams structured events (`status`, `token`, `tool_start`, `tool_done`, `error`) for the web UI.
 - The rule router runs first, the LLM intent planner runs only when ambiguous, and policy approval is still mandatory before execution.
+- Router confidence metadata is centralized through the confidence subsystem (`router.*` namespaced scores) so routing thresholds and outcomes remain stable across refactors.
 
 ## Schemas Summary
 - **Context**: Includes session metadata, mode (`dev` or `prod`), foreground app, user confirmation flag, and privacy settings (screenshot, OpenAI, storage).

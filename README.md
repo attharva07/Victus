@@ -29,6 +29,7 @@ pytest
 - `apps/local/main.py`: primary FastAPI application entrypoint.
 - `core/`: backend services (auth, memory, finance, files, camera, orchestrator).
 - `victus/`: policy/planner/executor domain logic used by tests and local flows.
+- Router/domain confidence scoring now flows through the shared confidence subsystem (`ConfidenceCore`/`ConfidenceStore`) with `router.*` namespaced keys to keep routing behavior deterministic and auditable.
 - `victus_local/`: compatibility helpers still used by unit tests.
 - `docs/`: active documentation.
 - `docs/legacy/`: quarantined historical docs.
