@@ -69,6 +69,63 @@ class ConfidenceLogger:
 IntentRetrieval = Callable[[ParsedIntent], float]
 
 
+class ConfidenceStore:
+    """In-memory confidence score registry.
+
+    Scores are keyed with namespaced identifiers (for example ``router.domain.system``)
+    and normalized to ``[0, 1]``.
+    """
+
+    def __init__(self) -> None:
+        self._scores: Dict[str, float] = {}
+
+    def set(self, key: str, value: float) -> float:
+        normalized = _clamp(value)
+        self._scores[key] = normalized
+        return normalized
+
+    def get(self, key: str, default: float = 0.0) -> float:
+        return self._scores.get(key, default)
+
+    def get_namespace(self, prefix: str) -> Dict[str, float]:
+        return {key: value for key, value in self._scores.items() if key.startswith(prefix)}
+
+
+class ConfidenceCore:
+    """Shared helpers for confidence normalization and deterministic ranking."""
+
+    def __init__(self, store: ConfidenceStore | None = None) -> None:
+        self.store = store or ConfidenceStore()
+
+    def normalize(self, raw_value: float, *, minimum: float = 0.0, maximum: float = 1.0) -> float:
+        if maximum <= minimum:
+            return _clamp(raw_value)
+        scaled = (raw_value - minimum) / (maximum - minimum)
+        return _clamp(scaled)
+
+    def rank(self, key_to_score: Dict[str, float], *, namespace: str) -> list[tuple[str, float]]:
+        namespaced = {f"{namespace}.{key}": _clamp(score) for key, score in key_to_score.items()}
+        for key, score in namespaced.items():
+            self.store.set(key, score)
+        return sorted(namespaced.items(), key=lambda item: item[1], reverse=True)
+
+
+_ROUTER_CONFIDENCE_STORE = ConfidenceStore()
+_ROUTER_CONFIDENCE_CORE = ConfidenceCore(_ROUTER_CONFIDENCE_STORE)
+
+
+def get_router_confidence_store() -> ConfidenceStore:
+    """Return the shared router confidence store instance."""
+
+    return _ROUTER_CONFIDENCE_STORE
+
+
+def get_router_confidence_core() -> ConfidenceCore:
+    """Return the shared router confidence helper bound to router store."""
+
+    return _ROUTER_CONFIDENCE_CORE
+
+
 class ConfidenceEngine:
     def __init__(self, retrieval_providers: Optional[Dict[str, IntentRetrieval]] = None) -> None:
         self.retrieval_providers = retrieval_providers or {}

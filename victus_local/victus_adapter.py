@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Optional
 
 from victus.app import VictusApp
+from victus.core.confidence import get_router_confidence_core
 from victus.core.intent_router import route_intent
 from victus.core.schemas import Context, IntentPlan, Plan, PlanStep, PrivacySettings
 from victus.core.safety_filter import SafetyFilter
@@ -26,6 +27,20 @@ from .media_router import parse_media_action
 
 
 _YOUTUBE_URL_RE = re.compile(r"https?://\\S+")
+_ROUTER_CONFIDENCE_CORE = get_router_confidence_core()
+
+
+def _domain_scores_for_route(route: str) -> dict[str, float]:
+    if route == "system":
+        return {"system": 1.0, "productivity": 0.0}
+    if route == "productivity":
+        return {"system": 0.0, "productivity": 1.0}
+    return {"system": 0.0, "productivity": 0.0}
+
+
+def _select_domain(route: str) -> str:
+    ranked = _ROUTER_CONFIDENCE_CORE.rank(_domain_scores_for_route(route), namespace="router.domain")
+    return ranked[0][0].split(".")[-1] if ranked else "productivity"
 
 
 def _build_context() -> Context:
@@ -45,7 +60,7 @@ def _local_rule_router(user_text: str, _context: Context) -> Plan | None:
     if media_action:
         return Plan(
             goal=user_text,
-            domain="productivity",
+            domain=_select_domain("productivity"),
             steps=[
                 PlanStep(
                     id="step-1",
@@ -68,7 +83,7 @@ def _local_rule_router(user_text: str, _context: Context) -> Plan | None:
         if url_match:
             return Plan(
                 goal=user_text,
-                domain="productivity",
+                domain=_select_domain("productivity"),
                 steps=[
                     PlanStep(
                         id="step-1",
@@ -84,7 +99,7 @@ def _local_rule_router(user_text: str, _context: Context) -> Plan | None:
         if query:
             return Plan(
                 goal=user_text,
-                domain="productivity",
+                domain=_select_domain("productivity"),
                 steps=[
                     PlanStep(
                         id="step-1",
@@ -102,7 +117,7 @@ def _local_rule_router(user_text: str, _context: Context) -> Plan | None:
         if app_name:
             return Plan(
                 goal=user_text,
-                domain="productivity",
+                domain=_select_domain("productivity"),
                 steps=[
                     PlanStep(
                         id="step-1",
@@ -119,7 +134,7 @@ def _local_rule_router(user_text: str, _context: Context) -> Plan | None:
     if routed_action:
         return Plan(
             goal=user_text,
-            domain="system",
+            domain=_select_domain("system"),
             steps=[
                 PlanStep(
                     id="step-1",

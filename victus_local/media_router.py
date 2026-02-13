@@ -9,8 +9,14 @@ from urllib.parse import quote_plus
 
 import requests
 
+from victus.core.confidence import get_router_confidence_core, get_router_confidence_store
+
 
 PROVIDERS = {"spotify", "youtube"}
+
+
+_ROUTER_CONFIDENCE_STORE = get_router_confidence_store()
+_ROUTER_CONFIDENCE_CORE = get_router_confidence_core()
 
 
 def _load_spotify_credentials() -> Tuple[Optional[str], Optional[str], Optional[str]]:
@@ -121,7 +127,10 @@ def build_confidence(
     retrieval_conf: float,
     retrieval_reasons: List[str],
 ) -> Dict[str, Any]:
-    final = max(0.0, min(1.0, 0.55 * parse_conf + 0.45 * retrieval_conf))
+    final = _ROUTER_CONFIDENCE_CORE.normalize(0.55 * parse_conf + 0.45 * retrieval_conf)
+    _ROUTER_CONFIDENCE_STORE.set("router.media.parse", parse_conf)
+    _ROUTER_CONFIDENCE_STORE.set("router.media.retrieval", retrieval_conf)
+    _ROUTER_CONFIDENCE_STORE.set("router.media.final", final)
     decision = _decision_from_confidence(final)
     return {
         "final": final,
