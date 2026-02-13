@@ -4,8 +4,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
-from .schemas import Plan, PlanStep
-from .util.jsonl import append_jsonl
+from ..schemas import Plan, PlanStep
+from ..util.jsonl import append_jsonl
 
 
 @dataclass(frozen=True)

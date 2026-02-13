@@ -22,13 +22,14 @@ No production UI is shipped in this repository after cleanup. Legacy UI implemen
 ## Testing
 Run all tests:
 ```bash
-pytest
+python -m pytest
 ```
 
 ## Project layout
 - `apps/local/main.py`: primary FastAPI application entrypoint.
 - `core/`: backend services (auth, memory, finance, files, camera, orchestrator).
 - `victus/`: policy/planner/executor domain logic used by tests and local flows.
+- `victus/core/confidence/`: namespaced confidence subsystem (core, events, store, and legacy compatibility).
 - `victus_local/`: compatibility helpers still used by unit tests.
 - `docs/`: active documentation.
 - `docs/legacy/`: quarantined historical docs.
