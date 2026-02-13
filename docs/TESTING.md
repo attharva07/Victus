@@ -1,8 +1,8 @@
 # Testing and Quality Standards
 
 ## Local commands
-- Run the focused test suite: `pytest -q --disable-warnings`
-- Run coverage reporting: `pytest --cov=victus --cov-report=term-missing --cov-report=xml`
+- Run the focused test suite: `python -m pytest -q --disable-warnings`
+- Run coverage reporting: `python -m pytest --cov=victus --cov-report=term-missing --cov-report=xml`
 - Run lint checks: `ruff check .`
 - Regenerate the unified quality report: `python scripts/quality_report.py`
 
