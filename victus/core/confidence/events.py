@@ -3,12 +3,30 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 
 from .models import ConfidenceEvent, ConfidenceEventType
 
 POSITIVE_EVENT_TYPES: set[ConfidenceEventType] = {"accept", "confirm", "success"}
 NEGATIVE_EVENT_TYPES: set[ConfidenceEventType] = {"reject", "override", "failure", "clarify"}
+
+UIFeedbackEventType = Literal[
+    "ui.user_override_drag_back",
+    "ui.user_pin_manual",
+    "ui.user_disable_adaptive",
+    "ui.ignored_urgent_item",
+    "ui.acknowledged_alert",
+    "ui.no_complaint_timeout",
+]
+
+UI_FEEDBACK_EVENT_SPECS: dict[UIFeedbackEventType, tuple[ConfidenceEventType, float]] = {
+    "ui.user_override_drag_back": ("override", 2.0),
+    "ui.user_pin_manual": ("success", 1.8),
+    "ui.user_disable_adaptive": ("failure", 2.0),
+    "ui.ignored_urgent_item": ("reject", 1.0),
+    "ui.acknowledged_alert": ("confirm", 1.0),
+    "ui.no_complaint_timeout": ("accept", 0.35),
+}
 
 
 def utc_now() -> datetime:
@@ -55,3 +73,9 @@ def is_negative(event_type: ConfidenceEventType) -> bool:
     """Return True when an event type should decrease confidence."""
 
     return event_type in NEGATIVE_EVENT_TYPES
+
+
+def ui_feedback_to_confidence(event_type: UIFeedbackEventType) -> tuple[ConfidenceEventType, float]:
+    """Map UI feedback events to core confidence event type and weight."""
+
+    return UI_FEEDBACK_EVENT_SPECS[event_type]

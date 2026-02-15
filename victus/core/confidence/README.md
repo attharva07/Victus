@@ -16,6 +16,7 @@ The confidence subsystem provides deterministic, namespaced confidence tracking 
 - `store.py`: JSON-backed persistence at `victus/data/confidence/store.json`.
 - `core.py`: Deterministic score update rules.
 - `legacy.py`: Existing plan-confidence logic preserved for compatibility.
+- `ui.py`: UI confidence scaffold API for layout actions and feedback events.
 - Router domain selection now writes deterministic scores under `router.domain.*` keys (for example, `router.domain.finance`, `router.domain.memories`, `router.domain.files`) via `ConfidenceCore` + `ConfidenceStore`.
 
 ## How to emit events
@@ -35,6 +36,41 @@ event = normalize_event(
 updated = core.apply_event(event)
 print(updated.value)
 ```
+
+## UI layout confidence scaffold
+
+UI layout confidence uses fixed action keys under `ui.layout.*`:
+
+- `ui.layout.pin_reminders`
+- `ui.layout.pin_alerts`
+- `ui.layout.freeze_layout`
+- `ui.layout.promote_workflow`
+- `ui.layout.demote_low_priority`
+
+UI components can report feedback using the scaffold helper:
+
+```python
+from victus.core.confidence import get_ui_score, record_ui_event
+
+record_ui_event(
+    action_key="ui.layout.pin_alerts",
+    event_type="ui.acknowledged_alert",
+    meta={"surface": "notification_panel"},
+)
+
+score = get_ui_score("ui.layout.pin_alerts")
+print(score.value)
+```
+
+Feedback strength categories:
+
+- **Strong negative**: explicit user correction or disablement (for example, `ui.user_override_drag_back`, `ui.user_disable_adaptive`).
+- **Strong positive**: explicit user endorsement (for example, `ui.user_pin_manual`).
+- **Medium negative**: ignored high-signal item (`ui.ignored_urgent_item`).
+- **Positive**: clear acknowledgment (`ui.acknowledged_alert`).
+- **Weak positive**: passive non-complaint (`ui.no_complaint_timeout`).
+
+> Warning: silence (`ui.no_complaint_timeout`) is intentionally weak feedback. It should never outweigh explicit user correction events.
 
 ## Scoring rules
 
