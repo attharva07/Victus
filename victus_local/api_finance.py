@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Body, HTTPException
@@ -30,7 +30,7 @@ async def finance_summary(month: Optional[str] = None) -> dict:
 
 @router.post("/api/finance/transaction")
 async def finance_add_transaction(payload: TransactionRequest = Body(...)) -> dict:
-    date = payload.date or datetime.utcnow().strftime("%Y-%m-%d")
+    date = payload.date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
     if not payload.category.strip():
         raise HTTPException(status_code=400, detail="Category is required")
     if payload.amount == 0:

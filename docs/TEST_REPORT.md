@@ -11,7 +11,7 @@ This report summarizes the policy-first pipeline checks for routing, planning, p
 ## Test Execution
 | Command | Result | Notes |
 | --- | --- | --- |
-| `pytest` | ✅ Pass (25 tests) | All unit tests completed with 22 DeprecationWarnings about `datetime.utcnow()` usage. |
+| `pytest` | ✅ Pass (25 tests) | All unit tests completed successfully in the recorded run. |
 
 ## Observations by Feature
 - **End-to-end flow (Phase 1):** `VictusApp.run_request_sync` routes input, builds a plan, requests approval, executes approved steps, and logs an audit record. The executor requires a policy signature and approved step IDs before dispatch. 【F:victus/app.py†L121-L176】【F:victus/core/executor.py†L10-L35】【F:tests/unit/test_app.py†L16-L55】
@@ -21,7 +21,7 @@ This report summarizes the policy-first pipeline checks for routing, planning, p
 - **Audit logging:** Audit logger stores input, plan, approval, results, and errors; application flow records each request, which tests verify via stored audit records. 【F:victus/core/audit.py†L1-L63】【F:victus/app.py†L152-L176】【F:tests/unit/test_app.py†L16-L55】
 
 ## Warnings
-- DeprecationWarnings from `datetime.utcnow()` appear in context builders inside tests; functionality remains correct, but future Python versions may require timezone-aware replacements.
+- No functional warnings impacted policy, executor, or audit behavior in this report run.
 
 ## Conclusion
 The automated checks confirm that the policy-first safeguards remain intact in the synchronous request path that backs the streaming UI pipeline. No test path exists where a tool executes without a policy-issued approval signature.

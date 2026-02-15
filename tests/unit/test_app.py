@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from victus.app import VictusApp
 from victus.core.schemas import Context, PlanStep, PrivacySettings
@@ -9,7 +9,7 @@ from victus.domains.productivity.allowlisted_plugins import GmailPlugin, DocsPlu
 def build_context():
     return Context(
         session_id="session-1",
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc),
         mode="dev",
         foreground_app=None,
         privacy=PrivacySettings(allow_screenshot=True, allow_send_to_openai=True),

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Iterable, List, Set, Tuple
 
@@ -77,7 +77,7 @@ class PolicyStore:
             enabled_actions = []
         updated_at = data.get("updated_at")
         if not isinstance(updated_at, str):
-            updated_at = datetime.utcnow().isoformat() + "Z"
+            updated_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         return {"enabled_actions": enabled_actions, "updated_at": updated_at}
 
     def get_state(self) -> PolicyState:
@@ -85,7 +85,7 @@ class PolicyStore:
         enabled_actions = self._sanitize_enabled_actions(runtime.get("enabled_actions", []))
         toggleable_actions = self.get_toggleable_actions()
         effective_actions = self._compute_effective_actions(enabled_actions)
-        updated_at = runtime.get("updated_at") or datetime.utcnow().isoformat() + "Z"
+        updated_at = runtime.get("updated_at") or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         return PolicyState(
             enabled_actions=enabled_actions,
             toggleable_actions=toggleable_actions,
@@ -96,7 +96,7 @@ class PolicyStore:
     def update_enabled_actions(self, actions: Iterable[str]) -> Tuple[PolicyState, List[str], List[str]]:
         sanitized = self._sanitize_enabled_actions(actions)
         previous_state = self.get_state()
-        updated_at = datetime.utcnow().isoformat() + "Z"
+        updated_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         payload = {"enabled_actions": sanitized, "updated_at": updated_at}
         self._write_runtime_policy(payload)
         next_state = self.get_state()
@@ -125,7 +125,7 @@ class PolicyStore:
     def _default_runtime_policy(self) -> Dict[str, object]:
         return {
             "enabled_actions": self.get_toggleable_actions(),
-            "updated_at": datetime.utcnow().isoformat() + "Z",
+            "updated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         }
 
     def _write_runtime_policy(self, payload: Dict[str, object]) -> None:

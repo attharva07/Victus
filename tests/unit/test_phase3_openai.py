@@ -1,5 +1,5 @@
 import pytest
-from datetime import datetime
+from datetime import datetime, timezone
 
 from victus.app import VictusApp
 from victus.core.policy import PolicyEngine, compute_policy_signature
@@ -33,7 +33,7 @@ def openai_allowlist():
 @pytest.fixture
 def base_context():
     return Context(
-        session_id="phase3", timestamp=datetime.utcnow(), mode="dev", foreground_app=None, privacy=PrivacySettings()
+        session_id="phase3", timestamp=datetime.now(timezone.utc), mode="dev", foreground_app=None, privacy=PrivacySettings()
     )
 
 
@@ -61,7 +61,7 @@ def test_openai_prompts_are_redacted_before_call(openai_allowlist):
     plugin = RecordingOpenAIPlugin()
     context = Context(
         session_id="phase3-redact",
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc),
         mode="dev",
         foreground_app=None,
         privacy=PrivacySettings(allow_send_to_openai=True),
@@ -103,7 +103,7 @@ def test_openai_client_is_mocked(openai_allowlist):
     policy = PolicyEngine(allowlist=openai_allowlist)
     context = Context(
         session_id="phase3-mock",
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc),
         mode="dev",
         foreground_app=None,
         privacy=PrivacySettings(allow_send_to_openai=True),
@@ -126,7 +126,7 @@ def test_openai_outline_returns_structured_result(openai_allowlist):
     policy = PolicyEngine(allowlist=openai_allowlist)
     context = Context(
         session_id="phase3-outline",
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc),
         mode="dev",
         foreground_app=None,
         privacy=PrivacySettings(allow_send_to_openai=True),
@@ -167,7 +167,7 @@ def test_audit_logs_redact_openai_prompts(openai_allowlist):
     app = VictusApp({"openai": OpenAIClientPlugin()}, policy_engine=policy)
     context = Context(
         session_id="phase3-audit",
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc),
         mode="dev",
         foreground_app=None,
         privacy=PrivacySettings(allow_send_to_openai=True),
@@ -190,7 +190,7 @@ def test_generate_and_summarize_outputs(openai_allowlist):
     policy = PolicyEngine(allowlist=openai_allowlist)
     context = Context(
         session_id="phase3-generate",
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc),
         mode="dev",
         foreground_app=None,
         privacy=PrivacySettings(allow_send_to_openai=True),

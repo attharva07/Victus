@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from .db import get_connection, init_db
@@ -30,8 +30,8 @@ def add_transaction(
 ) -> Dict[str, Any]:
     init_db()
     if not date:
-        date = datetime.utcnow().strftime("%Y-%m-%d")
-    ts = datetime.utcnow().isoformat() + "Z"
+        date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    ts = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     connection = get_connection()
     cursor = connection.cursor()
     cursor.execute(
@@ -93,7 +93,7 @@ def list_transactions(
 def month_summary(month: Optional[str] = None) -> Dict[str, Any]:
     init_db()
     if month is None:
-        month = datetime.utcnow().strftime("%Y-%m")
+        month = datetime.now(timezone.utc).strftime("%Y-%m")
     date_from, date_to = _parse_month_range(month)
     transactions = list_transactions(date_from=date_from, date_to=date_to)
     total_income = sum(tx["amount"] for tx in transactions if tx["amount"] > 0)
@@ -139,7 +139,7 @@ def export_logbook_md(
 ) -> str:
     if range == "month":
         if month is None:
-            month = datetime.utcnow().strftime("%Y-%m")
+            month = datetime.now(timezone.utc).strftime("%Y-%m")
         date_from, date_to = _parse_month_range(month)
     transactions = list_transactions(date_from=date_from, date_to=date_to)
     summary = month_summary(month if range == "month" else None)

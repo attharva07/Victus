@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 from uuid import uuid4
@@ -17,7 +17,7 @@ class VictusMemory(BaseModel):
     source: str
     confidence: float = 0.7
     tags: List[str] = Field(default_factory=list)
-    created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat() + "Z")
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"))
     last_used_at: Optional[str] = None
     pinned: bool = False
 
@@ -80,7 +80,7 @@ class VictusMemoryStore:
         scored.sort(key=lambda item: (item[0], item[1].created_at), reverse=True)
         selected = [memory for _, memory in scored[:limit]]
         if selected:
-            now = datetime.utcnow().isoformat() + "Z"
+            now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
             updated = self._load()
             memory_map = {memory.id: memory for memory in updated}
             for memory in selected:

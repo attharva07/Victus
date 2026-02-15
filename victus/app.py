@@ -10,7 +10,7 @@ Approval -> Execute -> Audit. Real interfaces (UI/voice/hotkey) will call into
 
 import asyncio
 from dataclasses import asdict, replace
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, AsyncIterator, Callable, Dict, Optional, Sequence
 
@@ -437,7 +437,7 @@ class VictusApp:
     def _default_context() -> Context:
         return Context(
             session_id="victus-session",
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             mode="dev",
             foreground_app=None,
             privacy=PrivacySettings(allow_send_to_openai=True),

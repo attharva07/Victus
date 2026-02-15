@@ -1,5 +1,5 @@
 import pytest
-from datetime import datetime
+from datetime import datetime, timezone
 
 from victus.core.policy import PolicyEngine, PolicyError
 from victus.core.sanitization import sanitize_plan
@@ -18,7 +18,7 @@ def build_llm_plan(prompt: str) -> Plan:
 def build_context(allow_send: bool = False) -> Context:
     return Context(
         session_id="llm-session",
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc),
         mode="dev",
         foreground_app=None,
         privacy=PrivacySettings(allow_send_to_openai=allow_send),
