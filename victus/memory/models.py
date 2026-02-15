@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
@@ -34,7 +34,7 @@ class MemoryRecord:
     ) -> "MemoryRecord":
         return cls(
             id=str(uuid4()),
-            ts=datetime.utcnow().isoformat() + "Z",
+            ts=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             scope=scope,
             kind=kind,
             text=text,
@@ -49,7 +49,7 @@ class MemoryRecord:
     def from_dict(cls, payload: Dict[str, Any]) -> "MemoryRecord":
         return cls(
             id=payload.get("id", str(uuid4())),
-            ts=payload.get("ts", datetime.utcnow().isoformat() + "Z"),
+            ts=payload.get("ts", datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")),
             scope=payload.get("scope", "session"),
             kind=payload.get("kind", "context"),
             text=payload.get("text", ""),

@@ -1,5 +1,5 @@
 import pytest
-from datetime import datetime
+from datetime import datetime, timezone
 
 from victus.core.policy import PolicyEngine
 from victus.core.schemas import Context, Plan, PlanStep, PrivacySettings, StepIO, DataOutbound, PolicyError
@@ -14,7 +14,7 @@ def use_openai_provider(monkeypatch):
 def base_context():
     return Context(
         session_id="123",
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc),
         mode="dev",
         foreground_app=None,
         privacy=PrivacySettings(),

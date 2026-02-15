@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from victus.app import VictusApp
@@ -31,7 +31,7 @@ _YOUTUBE_URL_RE = re.compile(r"https?://\\S+")
 def _build_context() -> Context:
     return Context(
         session_id="victus-local-ui",
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc),
         mode="dev",
         foreground_app=None,
         privacy=PrivacySettings(allow_send_to_openai=True),

@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, AsyncIterator, Dict, Optional
 
@@ -62,7 +62,7 @@ class LogHub:
             "level": level,
             "event": event,
             "data": data or {},
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         }
         await self._broadcast(payload)
 
@@ -208,7 +208,7 @@ async def list_memory() -> MemoryResponse:
 async def upsert_memory(payload: MemoryRequest = Body(...)) -> VictusMemory:
     data = payload.model_dump(exclude_none=True)
     if not data.get("created_at"):
-        data["created_at"] = datetime.utcnow().isoformat() + "Z"
+        data["created_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     memory = VictusMemory(**data)
     memory_store_v2.upsert(memory)
     return memory
@@ -257,7 +257,7 @@ async def unlock_admin(payload: AdminUnlockRequest = Body(...)) -> JSONResponse:
     token, expires_at = admin_auth.issue_session()
     response = JSONResponse(
         status_code=200,
-        content={"status": "unlocked", "expires_at": expires_at.isoformat() + "Z"},
+        content={"status": "unlocked", "expires_at": expires_at.isoformat().replace("+00:00", "Z")},
     )
     response.set_cookie(
         "victus_admin",

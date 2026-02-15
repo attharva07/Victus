@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List
 
 from .models import MemoryRecord
@@ -38,10 +38,10 @@ class MemorySearch:
     @staticmethod
     def _recency_weight(ts: str) -> float:
         try:
-            parsed = datetime.fromisoformat(ts.replace("Z", ""))
+            parsed = datetime.fromisoformat(ts.replace("Z", "+00:00"))
         except ValueError:
             return 0.0
-        days = (datetime.utcnow() - parsed).days
+        days = (datetime.now(timezone.utc) - parsed).days
         if days <= 1:
             return 1.0
         if days <= 7:

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from victus.core.audit import AuditLogger
 from victus.core.schemas import Approval, ApprovalConstraints, Context, Plan, PlanStep, PrivacySettings
@@ -7,7 +7,7 @@ from victus.core.schemas import Approval, ApprovalConstraints, Context, Plan, Pl
 def build_context():
     return Context(
         session_id="log-1",
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc),
         mode="dev",
         foreground_app=None,
         privacy=PrivacySettings(),

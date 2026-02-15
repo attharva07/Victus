@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Dict, List, Optional
 
 import json
@@ -263,7 +263,7 @@ class TurnHandler:
         )
         context = self.app.context_factory() if self.app.context_factory else Context(
             session_id="victus-session",
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             mode="dev",
             foreground_app=None,
         )

@@ -1,5 +1,5 @@
 import pytest
-from datetime import datetime
+from datetime import datetime, timezone
 
 from victus.app import VictusApp
 from victus.core.executor import ExecutionEngine
@@ -35,7 +35,7 @@ def build_plan():
 def build_context(allow_screenshot=True):
     return Context(
         session_id="abc",
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc),
         mode="dev",
         foreground_app=None,
         privacy=PrivacySettings(allow_screenshot=allow_screenshot),
@@ -61,7 +61,7 @@ def build_openai_plan():
 def build_openai_context():
     return Context(
         session_id="openai-session",
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc),
         mode="dev",
         foreground_app=None,
         privacy=PrivacySettings(allow_send_to_openai=True),

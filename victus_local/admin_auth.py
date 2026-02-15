@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 import secrets
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -35,7 +35,7 @@ class AdminAuthManager:
 
     def issue_session(self) -> tuple[str, datetime]:
         token = secrets.token_urlsafe(32)
-        expires_at = datetime.utcnow() + self.ttl
+        expires_at = datetime.now(timezone.utc) + self.ttl
         self._sessions[token] = expires_at
         return token, expires_at
 
@@ -50,7 +50,7 @@ class AdminAuthManager:
         expires_at = self._sessions.get(token)
         if not expires_at:
             return False
-        if datetime.utcnow() >= expires_at:
+        if datetime.now(timezone.utc) >= expires_at:
             self._sessions.pop(token, None)
             return False
         return True
