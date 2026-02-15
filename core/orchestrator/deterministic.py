@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+from functools import lru_cache
+import os
 import re
+from pathlib import Path
 from typing import Optional
 
 from core.orchestrator.schemas import Intent
+from victus.core.confidence import ConfidenceCore, ConfidenceStore, make_key
 
 
 def _normalize(text: str) -> str:
@@ -143,13 +147,46 @@ def parse_camera_intent(utterance: str) -> Optional[Intent]:
     return None
 
 
+_DOMAIN_PARSERS = (
+    ("camera", parse_camera_intent),
+    ("memories", parse_memory_intent),
+    ("finance", parse_finance_intent),
+    ("files", parse_files_intent),
+)
+
+
+@lru_cache(maxsize=1)
+def _router_confidence_components() -> tuple[ConfidenceStore, ConfidenceCore]:
+    data_dir = Path(os.getenv("VICTUS_DATA_DIR", "victus/data"))
+    store = ConfidenceStore(data_dir / "confidence" / "router_domain_store.json")
+    return store, ConfidenceCore(store)
+
+
+def _router_domain_key(domain: str) -> str:
+    return make_key("router", "domain", domain)
+
+
+def _select_domain_intent(utterance: str) -> Optional[Intent]:
+    store, core = _router_confidence_components()
+    best: Optional[Intent] = None
+    best_score = -1.0
+
+    for domain, parser in _DOMAIN_PARSERS:
+        intent = parser(utterance)
+        domain_score = 1.0 if intent is not None else 0.0
+        key = _router_domain_key(domain)
+        core.get_score(key)
+        store.update_score(key, domain_score)
+
+        if intent is not None and domain_score > best_score:
+            best = intent
+            best_score = domain_score
+
+    return best
+
+
 def parse_intent(utterance: str) -> Optional[Intent]:
-    return (
-        parse_camera_intent(utterance)
-        or parse_memory_intent(utterance)
-        or parse_finance_intent(utterance)
-        or parse_files_intent(utterance)
-    )
+    return _select_domain_intent(utterance)
 
 
 def looks_like_finance(utterance: str) -> bool:
