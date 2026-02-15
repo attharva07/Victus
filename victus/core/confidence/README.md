@@ -16,6 +16,7 @@ The confidence subsystem provides deterministic, namespaced confidence tracking 
 - `store.py`: JSON-backed persistence at `victus/data/confidence/store.json`.
 - `core.py`: Deterministic score update rules.
 - `legacy.py`: Existing plan-confidence logic preserved for compatibility.
+- Router domain selection now writes deterministic scores under `router.domain.*` keys (for example, `router.domain.finance`, `router.domain.memories`, `router.domain.files`) via `ConfidenceCore` + `ConfidenceStore`.
 
 ## How to emit events
 
