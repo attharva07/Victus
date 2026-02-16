@@ -1,4 +1,4 @@
-import type { ApprovalItem, DialogueMessage, FailureItem, ReminderItem, TimelineEvent, WorkflowItem } from '../../state/mockState';
+import type { ApprovalItem, DialogueMessage, FailureItem, ReminderItem, TimelineEvent, WorkflowItem } from '../../types/victus-ui';
 import WidgetCard from './WidgetCard';
 
 export function DialogueWidget({ messages, pinned, onTogglePin }: { messages: DialogueMessage[]; pinned?: boolean; onTogglePin: () => void }) {
@@ -72,14 +72,14 @@ export function WorldTldrWidget({ items, pinned, onTogglePin }: { items: string[
   );
 }
 
-export function WorkflowsBoardWidget({ items, pinned, onTogglePin }: { items: WorkflowItem[]; pinned?: boolean; onTogglePin: () => void }) {
+export function WorkflowsBoardWidget({ items, onResume, pinned, onTogglePin }: { items: WorkflowItem[]; onResume?: (id: string) => void; pinned?: boolean; onTogglePin: () => void }) {
   return (
     <WidgetCard title="Workflows Board" canExpand={items.length > 1} pinned={pinned} onTogglePin={onTogglePin} testId="widget-workflows-board">
       <div className="space-y-2 text-xs">
         {items.map((item) => (
           <div key={item.id} className="rounded border border-borderSoft/60 px-2 py-1.5">
             <p>{item.title}</p><p className="text-[10px] text-slate-500">{item.stepLabel} · {item.progress}%</p>
-            <button type="button" className="mt-1 rounded border border-cyan-700/40 px-2 py-0.5 text-[10px] text-cyan-200">Resume</button>
+            <button type="button" className="mt-1 rounded border border-cyan-700/40 px-2 py-0.5 text-[10px] text-cyan-200" onClick={() => onResume?.(item.id)}>Resume</button>
           </div>
         ))}
       </div>
