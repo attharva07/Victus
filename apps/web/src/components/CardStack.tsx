@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { CardSize } from '../layout/types';
 import SystemOverviewCard from './SystemOverviewCard';
 import type { VictusItem } from '../data/victusStore';
@@ -9,6 +9,12 @@ type StackCard = {
   title: string;
   size: CardSize;
   render: (focusMode: boolean) => ReactNode;
+};
+
+type DialogueMessage = {
+  id: string;
+  role: 'user' | 'system';
+  text: string;
 };
 
 const sizeTokens: Record<CardSize, string> = {
@@ -62,18 +68,45 @@ function WorldTldrPreview({ focusMode }: { focusMode: boolean }) {
 export default function CardStack({
   today,
   upcoming,
-  completed,
+  outcomes,
+  dialogueMessages,
+  dialogueOpen,
   selectedId,
   onSelect
 }: {
   today: VictusItem[];
   upcoming: VictusItem[];
-  completed: VictusItem[];
+  outcomes: {
+    reminders: VictusItem[];
+    approvals: VictusItem[];
+    workflows: VictusItem[];
+    failures: VictusItem[];
+    alerts: VictusItem[];
+  };
+  dialogueMessages: DialogueMessage[];
+  dialogueOpen: boolean;
   selectedId?: string;
   onSelect: (id: string) => void;
 }) {
   const [activeIndex, setActiveIndex] = useState(0);
   const [focusedCardId, setFocusedCardId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setFocusedCardId(null);
+      }
+    };
+
+    window.addEventListener('keydown', onEscape);
+    return () => window.removeEventListener('keydown', onEscape);
+  }, []);
+
+  useEffect(() => {
+    if (dialogueOpen) {
+      setFocusedCardId('dialogue');
+    }
+  }, [dialogueOpen]);
 
   const cards = useMemo<StackCard[]>(
     () => [
@@ -83,14 +116,33 @@ export default function CardStack({
         size: 'L',
         render: (focusMode) => (
           <SystemOverviewCard
-            today={today}
-            upcoming={upcoming}
-            completed={completed}
+            outcomes={outcomes}
             selectedId={selectedId}
             onSelect={onSelect}
             focusMode={focusMode}
           />
         )
+      },
+      {
+        id: 'dialogue',
+        title: 'Dialogue',
+        size: 'S',
+        render: (focusMode) => {
+          const visible = focusMode ? dialogueMessages : dialogueMessages.slice(-2);
+          return (
+            <ul data-testid="dialogue-thread" className={`space-y-2 text-xs ${focusMode ? 'thin-scroll max-h-[58vh] overflow-y-auto pr-1' : ''}`}>
+              {visible.map((message) => (
+                <li
+                  key={message.id}
+                  className={`rounded-lg border px-3 py-2 ${message.role === 'user' ? 'border-cyan-800/40 bg-cyan-950/20 text-cyan-100' : 'border-violet-900/40 bg-violet-950/20 text-slate-200'}`}
+                >
+                  <p className="text-[10px] uppercase tracking-[0.16em] text-slate-400">{message.role}</p>
+                  <p className="mt-1 text-sm">{message.text}</p>
+                </li>
+              ))}
+            </ul>
+          );
+        }
       },
       {
         id: 'timeline',
@@ -105,7 +157,7 @@ export default function CardStack({
         render: (focusMode) => <WorldTldrPreview focusMode={focusMode} />
       }
     ],
-    [completed, onSelect, selectedId, today, upcoming]
+    [dialogueMessages, onSelect, outcomes, selectedId, today, upcoming]
   );
 
   const shiftActive = (delta: number) => {
@@ -147,15 +199,20 @@ export default function CardStack({
               key={card.id}
               data-testid={`stack-card-${card.id}`}
               data-active={isActive}
+              data-focused={isFocused}
               className={`rounded-xl border border-borderSoft/70 bg-panel px-4 py-3 transition-all duration-300 ${
                 hasFocusMode ? (isFocused ? `${sizeTokens.XL}` : compressedStrip) : sizeTokens[card.size]
               } ${isActive ? 'ring-1 ring-cyan-400/35' : ''} ${hasFocusMode && !isFocused ? 'overflow-hidden opacity-80' : 'overflow-hidden'}`}
+              onClick={() => setFocusedCardId((current) => (current === card.id ? null : card.id))}
             >
               <header className="flex items-center justify-between">
                 <h2 className="text-sm font-medium text-slate-100">{card.title}</h2>
                 <button
                   className="text-xs text-slate-400 hover:text-slate-200"
-                  onClick={() => setFocusedCardId((current) => (current === card.id ? null : card.id))}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setFocusedCardId((current) => (current === card.id ? null : card.id));
+                  }}
                 >
                   {isFocused ? 'Collapse' : 'Expand'}
                 </button>
