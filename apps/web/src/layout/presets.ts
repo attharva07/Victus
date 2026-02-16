@@ -1,19 +1,18 @@
 import type { LayoutPlan } from './types';
 
-// P1: LeftRail | CenterStack | RightStack | BottomStrip + fixed CommandDock
 export const defaultLayoutPlan: LayoutPlan = {
-  preset: 'P1',
+  preset: 'P2',
   generatedAt: Date.now(),
-  ttlSeconds: 300,
+  ttlSeconds: 120,
   placements: [
-    { id: 'system_overview', zone: 'center', size: 'L', priority: 1 },
-    { id: 'timeline', zone: 'center', size: 'M', priority: 2 },
-    { id: 'world_tldr', zone: 'center', size: 'S', priority: 3 },
-    { id: 'reminders', zone: 'right', size: 'S', priority: 1 },
-    { id: 'alerts', zone: 'right', size: 'S', priority: 2 },
-    { id: 'approvals', zone: 'right', size: 'XS', priority: 3 },
-    { id: 'workflows', zone: 'right', size: 'S', priority: 4 },
-    { id: 'failures', zone: 'right', size: 'S', priority: 5 }
+    { id: 'system_overview', zone: 'center', size: 'L', colSpan: 1, priority: 1 },
+    { id: 'timeline', zone: 'center', size: 'M', colSpan: 1, priority: 2 },
+    { id: 'world_tldr', zone: 'center', size: 'S', colSpan: 1, priority: 3 },
+    { id: 'reminders', zone: 'right', size: 'S', colSpan: 1, priority: 10 },
+    { id: 'alerts', zone: 'right', size: 'S', colSpan: 1, priority: 11 },
+    { id: 'approvals', zone: 'right', size: 'S', colSpan: 1, priority: 12 },
+    { id: 'workflows', zone: 'right', size: 'S', colSpan: 1, priority: 13 },
+    { id: 'failures', zone: 'right', size: 'S', colSpan: 1, priority: 14 }
   ]
 };
 
