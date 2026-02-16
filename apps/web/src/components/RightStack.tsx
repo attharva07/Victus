@@ -1,13 +1,16 @@
-import { useEffect, useMemo, useState } from 'react';
+import type { LayoutPlan } from '../layout/types';
 import type { VictusCard, VictusItem } from '../data/victusStore';
 
 const PREVIEW_COUNT = 2;
 
 const cardSizeTokens = {
-  preview: 'h-24',
-  focused: 'h-[48vh]',
+  XS: 'h-20',
+  S: 'h-28',
+  M: 'h-40',
+  L: 'h-56',
+  XL: 'h-[64vh]',
   compressed: 'h-12'
-};
+} as const;
 
 function contextMeta(item: VictusItem) {
   if (item.snoozedUntil) return `snoozed until ${item.snoozedUntil}`;
@@ -22,50 +25,47 @@ export default function RightStack({
   cards,
   items,
   selectedId,
-  onSelect
+  onSelect,
+  plan,
+  focusedCardId,
+  onFocusCard
 }: {
   cards: VictusCard[];
   items: Record<string, VictusItem>;
   selectedId?: string;
   onSelect: (id: string) => void;
+  plan: LayoutPlan;
+  focusedCardId?: string;
+  onFocusCard: (id?: string) => void;
 }) {
-  const [focusedKind, setFocusedKind] = useState<VictusCard['kind'] | null>(null);
+  const cardsByKind = new Map(cards.map((card) => [card.kind, card]));
 
-  useEffect(() => {
-    const onEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setFocusedKind(null);
-      }
-    };
+  const rightPlacements = plan.placements
+    .filter((placement) => placement.zone === 'right')
+    .sort((a, b) => a.priority - b.priority || a.id.localeCompare(b.id));
 
-    window.addEventListener('keydown', onEscape);
-    return () => window.removeEventListener('keydown', onEscape);
-  }, []);
-
-  const resolvedCards = useMemo(
-    () => cards.map((card) => ({ ...card, entries: card.itemIds.map((id) => items[id]).filter(Boolean) })),
-    [cards, items]
-  );
-
-  const hasFocusMode = Boolean(focusedKind);
+  const hasFocusMode = Boolean(focusedCardId);
 
   return (
     <aside className="h-full overflow-hidden rounded-2xl border border-borderSoft/60 bg-panel/30 p-3">
       <div className="flex h-full flex-col gap-3 overflow-hidden">
-        {resolvedCards.map((card) => {
-          const isFocused = focusedKind === card.kind;
-          const previewItems = card.entries.slice(0, PREVIEW_COUNT);
-          const visibleItems = isFocused ? card.entries : previewItems;
+        {rightPlacements.map((placement) => {
+          const card = cardsByKind.get(placement.id as VictusCard['kind']);
+          if (!card) return null;
+
+          const entries = card.itemIds.map((id) => items[id]).filter(Boolean);
+          const isFocused = focusedCardId === placement.id;
+          const visibleItems = isFocused ? entries : entries.slice(0, PREVIEW_COUNT);
 
           return (
             <section
-              key={card.kind}
-              data-testid={`right-stack-card-${card.kind}`}
+              key={placement.id}
+              data-testid={`right-stack-card-${placement.id}`}
               data-focused={isFocused}
               className={`min-h-0 overflow-hidden rounded-xl border border-borderSoft/70 bg-panel px-3 py-2 transition-all duration-300 ${
-                hasFocusMode ? (isFocused ? cardSizeTokens.focused : cardSizeTokens.compressed) : cardSizeTokens.preview
+                hasFocusMode ? (isFocused ? cardSizeTokens.XL : cardSizeTokens.compressed) : cardSizeTokens[placement.size]
               }`}
-              onClick={() => setFocusedKind((current) => (current === card.kind ? null : card.kind))}
+              onClick={() => onFocusCard(isFocused ? undefined : placement.id)}
             >
               <header className="flex items-center justify-between gap-2">
                 <h3 className="truncate text-left text-xs uppercase tracking-[0.16em] text-slate-300">{card.title}</h3>
@@ -73,7 +73,7 @@ export default function RightStack({
                   className="text-[11px] text-slate-400 hover:text-slate-200"
                   onClick={(event) => {
                     event.stopPropagation();
-                    setFocusedKind((current) => (current === card.kind ? null : card.kind));
+                    onFocusCard(isFocused ? undefined : placement.id);
                   }}
                 >
                   {isFocused ? 'Collapse' : 'Expand'}

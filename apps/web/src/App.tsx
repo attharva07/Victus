@@ -8,8 +8,10 @@ import CameraScreen from './views/CameraScreen';
 import FilesScreen from './views/FilesScreen';
 import FinanceScreen from './views/FinanceScreen';
 import MemoriesScreen from './views/MemoriesScreen';
-import defaultLayoutPlan from './layout/presets';
 import { initialVictusState, type VictusState } from './data/victusStore';
+import { generateLayoutPlan } from './layout/engine';
+import { getInitialSignals, simulateUpdate } from './layout/mockSignals';
+import type { LayoutSignals } from './layout/signals';
 
 type DialogueMessage = {
   id: string;
@@ -27,12 +29,14 @@ function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [activeView, setActiveView] = useState<VictusView>('overview');
   const [dialogueMessages, setDialogueMessages] = useState<DialogueMessage[]>(dialogueSeed);
-  const [dialogueOpen, setDialogueOpen] = useState(false);
+  const [signals, setSignals] = useState<LayoutSignals>(getInitialSignals());
+  const [manualFocusCardId, setManualFocusCardId] = useState<string | undefined>();
 
   useEffect(() => {
     const onEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         setSelectedId(null);
+        setManualFocusCardId(undefined);
       }
     };
 
@@ -63,11 +67,13 @@ function App() {
     [state.items]
   );
 
+  const plan = useMemo(() => generateLayoutPlan(signals), [signals]);
+
   const handleCommandDockIntent = () => {
     if (activeView !== 'overview') {
       setActiveView('overview');
     }
-    setDialogueOpen(true);
+    setSignals((prev) => ({ ...prev, dialogueOpen: true, updatedAt: prev.updatedAt + 1 }));
   };
 
   const handleCommandSubmit = (text: string) => {
@@ -83,6 +89,10 @@ function App() {
     ]);
   };
 
+  const applySimulatedSignals = () => {
+    setSignals((prev) => simulateUpdate({ ...prev, dialogueOpen: false }));
+  };
+
   return (
     <div className="h-screen overflow-hidden bg-bg text-slate-200">
       <div className="grid h-full grid-cols-[64px_minmax(0,1fr)_320px] gap-4 px-3 pb-28 pt-3">
@@ -93,15 +103,28 @@ function App() {
         </main>
 
         <section className="h-full overflow-hidden">
-          <RightStack cards={state.contextCards} items={state.items} selectedId={selectedId ?? undefined} onSelect={setSelectedId} />
+          <RightStack
+            cards={state.contextCards}
+            items={state.items}
+            selectedId={selectedId ?? undefined}
+            onSelect={setSelectedId}
+            plan={plan}
+            focusedCardId={manualFocusCardId}
+            onFocusCard={setManualFocusCardId}
+          />
         </section>
       </div>
 
       <CommandDock onInteract={handleCommandDockIntent} onSubmit={handleCommandSubmit} />
-      <BottomStrip />
+      <BottomStrip
+        confidence={signals.confidence}
+        onSimulate={applySimulatedSignals}
+        isAdaptive={!manualFocusCardId}
+        onReturnAdaptive={() => setManualFocusCardId(undefined)}
+      />
 
       <div className="sr-only" aria-live="polite">
-        Active preset: {defaultLayoutPlan.preset}
+        Active preset: {plan.preset}
       </div>
     </div>
   );
@@ -114,9 +137,11 @@ function App() {
           upcoming={timeline.upcoming}
           outcomes={outcomes}
           dialogueMessages={dialogueMessages}
-          dialogueOpen={dialogueOpen}
           selectedId={selectedId ?? undefined}
           onSelect={setSelectedId}
+          plan={plan}
+          focusedCardId={manualFocusCardId}
+          onFocusCard={setManualFocusCardId}
         />
       );
     }

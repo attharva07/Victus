@@ -30,6 +30,10 @@ cd apps/web && npm install && npm run dev
 cd apps/web && npm test
 ```
 
+Adaptive layout simulation (Phase 4B):
+- In the web UI, use **Simulate Signals Update** in the bottom strip to cycle mocked layout signals.
+- If you manually focus a card, use **Return to Adaptive** to restore engine-driven focus behavior.
+
 
 ### Production prep (Option A: FastAPI serves built UI)
 Build the frontend:

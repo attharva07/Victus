@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import App from './App';
 
-describe('Phase 4A.3 behavior', () => {
+describe('Phase 4B adaptive layout behavior', () => {
   it('clicking center cards toggles focus state', () => {
     render(<App />);
 
@@ -70,6 +70,27 @@ describe('Phase 4A.3 behavior', () => {
 
     expect(screen.getByText('Infra incident follow-up')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Q2 Planning Principles/i })).not.toBeInTheDocument();
+  });
+
+
+
+  it('simulate updates preserve two-column center grid in overview', () => {
+    render(<App />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Simulate Signals Update' }));
+
+    const grid = screen.getByTestId('center-grid');
+    expect(grid.className).toContain('grid-cols-2');
+  });
+
+  it('manual focus shows Return to Adaptive control', () => {
+    render(<App />);
+
+    fireEvent.click(screen.getByTestId('stack-card-timeline'));
+    expect(screen.getByRole('button', { name: 'Return to Adaptive' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Return to Adaptive' }));
+    expect(screen.queryByRole('button', { name: 'Return to Adaptive' })).not.toBeInTheDocument();
   });
 
   it('finance add transaction appends to list', () => {
