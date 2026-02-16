@@ -1,4 +1,4 @@
-import type { MockUiState } from '../state/mockState';
+import type { VictusUIState } from '../types/victus-ui';
 import { widgetRegistry } from './widgetRegistry';
 import type { FocusPinMap, FocusPlacement, LayoutEngineConfig, LayoutPlan, WidgetDefinition, WidgetRole } from './types';
 
@@ -6,10 +6,7 @@ type RuntimeWidget = Omit<WidgetDefinition, 'score'> & { score: number; pinned: 
 
 const roleWeight: Record<WidgetRole, number> = { primary: 0, secondary: 1, tertiary: 2 };
 
-export const defaultEngineConfig: LayoutEngineConfig = {
-  urgencyWeight: 0.75,
-  confidenceMultiplierBase: 0.25
-};
+export const defaultEngineConfig: LayoutEngineConfig = { urgencyWeight: 0.75, confidenceMultiplierBase: 0.25 };
 
 function sortByRoleThenScore(items: RuntimeWidget[]) {
   return [...items].sort((a, b) => {
@@ -32,42 +29,39 @@ function sortPinnedInColumn(items: RuntimeWidget[]) {
 }
 
 function toPlacement(widget: RuntimeWidget, column: 'left' | 'right'): FocusPlacement {
-  return {
-    id: widget.id,
-    score: widget.score,
-    role: widget.role,
-    sizePreset: widget.sizePreset,
-    heightHint: widget.heightHint,
-    column
-  };
+  return { id: widget.id, score: widget.score, role: widget.role, sizePreset: widget.sizePreset, heightHint: widget.heightHint, column };
 }
 
 function packFocus(widgets: RuntimeWidget[]): FocusPlacement[] {
-  const pinned = widgets.filter((entry) => entry.pinned);
-  const unpinned = widgets.filter((entry) => !entry.pinned);
+  const pinned = widgets.filter((item) => item.pinned);
+  const unpinned = widgets.filter((item) => !item.pinned);
 
-  const pinnedLeft = sortPinnedInColumn(pinned.filter((entry) => (entry.pinMeta?.col ?? 0) === 0));
-  const pinnedRight = sortPinnedInColumn(pinned.filter((entry) => (entry.pinMeta?.col ?? 0) === 1));
+  const pinnedLeft = sortPinnedInColumn(pinned.filter((entry) => entry.pinMeta?.col !== 1));
+  const pinnedRight = sortPinnedInColumn(pinned.filter((entry) => entry.pinMeta?.col === 1));
 
-  const columns = {
-    left: pinnedLeft.reduce((sum, entry) => sum + entry.heightHint, 0),
-    right: pinnedRight.reduce((sum, entry) => sum + entry.heightHint, 0)
-  };
+  const leftPlacements = pinnedLeft.map((entry) => toPlacement(entry, 'left'));
+  const rightPlacements = pinnedRight.map((entry) => toPlacement(entry, 'right'));
 
-  const unpinnedPlacements = sortByRoleThenScore(unpinned).map((widget) => {
-    const column = columns.left <= columns.right ? 'left' : 'right';
-    columns[column] += widget.heightHint;
-    return toPlacement(widget, column);
+  const leftHeight = leftPlacements.reduce((sum, item) => sum + item.heightHint, 0);
+  const rightHeight = rightPlacements.reduce((sum, item) => sum + item.heightHint, 0);
+
+  let runningLeft = leftHeight;
+  let runningRight = rightHeight;
+  const unpinnedPlacements = unpinned.map((widget) => {
+    const placeLeft = runningLeft <= runningRight;
+    if (placeLeft) {
+      runningLeft += widget.heightHint;
+      return toPlacement(widget, 'left');
+    }
+    runningRight += widget.heightHint;
+    return toPlacement(widget, 'right');
   });
 
-  return [
-    ...pinnedLeft.map((entry) => toPlacement(entry, 'left')),
-    ...pinnedRight.map((entry) => toPlacement(entry, 'right')),
-    ...unpinnedPlacements
-  ];
+  // Keep pinned cards fixed at the front of their original column.
+  return [...leftPlacements, ...rightPlacements, ...unpinnedPlacements];
 }
 
-export function buildLayoutPlan(state: MockUiState, pinState: FocusPinMap = {}): LayoutPlan {
+export function computeLayout(state: VictusUIState, pinState: FocusPinMap = {}, now = Date.now()): LayoutPlan {
   const selected: RuntimeWidget[] = widgetRegistry
     .map((widget) => {
       const pinMeta = pinState[widget.id];
@@ -79,5 +73,7 @@ export function buildLayoutPlan(state: MockUiState, pinState: FocusPinMap = {}):
   const focus = sortByRoleThenScore(selected.filter((entry) => entry.lane === 'FOCUS'));
   const context = sortByRoleThenScore(selected.filter((entry) => entry.lane === 'CONTEXT'));
 
-  return { computedAt: Date.now(), focusPlacements: packFocus(focus), contextOrder: context.map((entry) => entry.id) };
+  return { computedAt: now, focusPlacements: packFocus(focus), contextOrder: context.map((entry) => entry.id) };
 }
+
+export const buildLayoutPlan = computeLayout;

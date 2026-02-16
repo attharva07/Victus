@@ -1,22 +1,22 @@
-import type { AlertItem, ApprovalItem, FailureItem, ReminderItem, WorkflowItem } from '../../state/mockState';
+import type { AlertItem, ApprovalItem, FailureItem, ReminderItem, WorkflowItem } from '../../types/victus-ui';
 import WidgetCard from './WidgetCard';
 
 function emptyState(label: string) {
   return <p className="text-[11px] text-slate-500">No {label.toLowerCase()} right now.</p>;
 }
 
-export function RemindersWidget({ items }: { items: ReminderItem[] }) {
+export function RemindersWidget({ items, onDone }: { items: ReminderItem[]; onDone?: (id: string) => void }) {
   return (
     <WidgetCard title={`Reminders (${items.length})`} canExpand={items.length > 2} testId="widget-reminders" scrollBody={false} className={items.length === 0 ? 'bg-panelSoft/50' : undefined}>
-      {items.length === 0 ? emptyState('Reminders') : <ul className="space-y-2 text-xs">{items.map((item) => <li key={item.id}>{item.title}</li>)}</ul>}
+      {items.length === 0 ? emptyState('Reminders') : <ul className="space-y-2 text-xs">{items.map((item) => <li key={item.id}><span>{item.title}</span>{onDone ? <button className="ml-2 text-[10px] text-emerald-300" onClick={() => onDone(item.id)}>done</button> : null}</li>)}</ul>}
     </WidgetCard>
   );
 }
 
-export function AlertsWidget({ items }: { items: AlertItem[] }) {
+export function AlertsWidget({ items, onAck }: { items: AlertItem[]; onAck?: (id: string) => void }) {
   return (
     <WidgetCard title={`Alerts (${items.length})`} canExpand={items.length > 2} testId="widget-alerts" scrollBody={false} className={items.length === 0 ? 'bg-panelSoft/50' : undefined}>
-      {items.length === 0 ? emptyState('Alerts') : <ul className="space-y-2 text-xs">{items.map((item) => <li key={item.id}>{item.title}</li>)}</ul>}
+      {items.length === 0 ? emptyState('Alerts') : <ul className="space-y-2 text-xs">{items.map((item) => <li key={item.id}><span>{item.title}</span>{onAck ? <button className="ml-2 text-[10px] text-cyan-300" onClick={() => onAck(item.id)}>ack</button> : null}</li>)}</ul>}
     </WidgetCard>
   );
 }
@@ -43,18 +43,18 @@ export function ApprovalsWidget({ items, onApprove, onDeny }: { items: ApprovalI
   );
 }
 
-export function WorkflowsWidget({ items }: { items: WorkflowItem[] }) {
-  return (
-    <WidgetCard title={`Workflows (${items.length})`} canExpand={items.length > 2} testId="widget-workflows" scrollBody={false} className={items.length === 0 ? 'bg-panelSoft/50' : undefined}>
-      {items.length === 0 ? emptyState('Workflows') : <ul className="space-y-2 text-xs">{items.map((item) => <li key={item.id}>{item.title}</li>)}</ul>}
-    </WidgetCard>
-  );
-}
-
 export function FailuresWidget({ items }: { items: FailureItem[] }) {
   return (
     <WidgetCard title={`Failures (${items.length})`} canExpand={items.length > 2} testId="widget-failures" scrollBody={false} className={items.length === 0 ? 'bg-panelSoft/50' : undefined}>
       {items.length === 0 ? emptyState('Failures') : <ul className="space-y-2 text-xs">{items.map((item) => <li key={item.id}>{item.title}</li>)}</ul>}
+    </WidgetCard>
+  );
+}
+
+export function WorkflowsWidget({ items, onResume }: { items: WorkflowItem[]; onResume?: (id: string) => void }) {
+  return (
+    <WidgetCard title={`Workflows (${items.length})`} canExpand={items.length > 2} testId="widget-workflows" scrollBody={false} className={items.length === 0 ? 'bg-panelSoft/50' : undefined}>
+      {items.length === 0 ? emptyState('Workflows') : <ul className="space-y-2 text-xs">{items.map((item) => <li key={item.id}><span>{item.title}</span>{onResume ? <button className="ml-2 text-[10px] text-cyan-300" onClick={() => onResume(item.id)}>resume</button> : null}</li>)}</ul>}
     </WidgetCard>
   );
 }
