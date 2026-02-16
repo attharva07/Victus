@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import BottomStrip from './components/BottomStrip';
 import CardStack from './components/CardStack';
 import CommandDock from './components/CommandDock';
@@ -12,6 +12,7 @@ import { initialVictusState, type VictusState } from './data/victusStore';
 import { generateLayoutPlan } from './layout/engine';
 import { getInitialSignals, simulateUpdate } from './layout/mockSignals';
 import type { LayoutSignals } from './layout/signals';
+import type { LayoutPlan } from './layout/types';
 
 type DialogueMessage = {
   id: string;
@@ -31,6 +32,7 @@ function App() {
   const [dialogueMessages, setDialogueMessages] = useState<DialogueMessage[]>(dialogueSeed);
   const [signals, setSignals] = useState<LayoutSignals>(getInitialSignals());
   const [manualFocusCardId, setManualFocusCardId] = useState<string | undefined>();
+  const prevPlanRef = useRef<LayoutPlan | undefined>();
 
   useEffect(() => {
     const onEscape = (event: KeyboardEvent) => {
@@ -67,7 +69,11 @@ function App() {
     [state.items]
   );
 
-  const plan = useMemo(() => generateLayoutPlan(signals), [signals]);
+  const plan = useMemo(() => generateLayoutPlan(signals, prevPlanRef.current), [signals]);
+
+  useEffect(() => {
+    prevPlanRef.current = plan;
+  }, [plan]);
 
   const handleCommandDockIntent = () => {
     if (activeView !== 'overview') {
@@ -116,12 +122,7 @@ function App() {
       </div>
 
       <CommandDock onInteract={handleCommandDockIntent} onSubmit={handleCommandSubmit} />
-      <BottomStrip
-        confidence={signals.confidence}
-        onSimulate={applySimulatedSignals}
-        isAdaptive={!manualFocusCardId}
-        onReturnAdaptive={() => setManualFocusCardId(undefined)}
-      />
+      <BottomStrip confidence={`${signals.confidence} (${signals.confidenceScore})`} onSimulate={applySimulatedSignals} />
 
       <div className="sr-only" aria-live="polite">
         Active preset: {plan.preset}

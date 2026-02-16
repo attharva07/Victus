@@ -1,184 +1,257 @@
 import type { LayoutSignals, Severity } from './signals';
-import type { CardPlacement, CardSize, LayoutPlan } from './types';
+import type { CardPlacement, CardSize, LayoutPlan, Zone } from './types';
 
-type AllowedSet = {
-  center: string[];
-  right: string[];
-  dialogueOnly: boolean;
+type CardId =
+  | 'systemOverview'
+  | 'dialogue'
+  | 'timeline'
+  | 'worldTldr'
+  | 'reminders'
+  | 'alerts'
+  | 'approvals'
+  | 'workflows'
+  | 'failures';
+
+type CardScore = {
+  id: CardId;
+  zone: Zone;
+  urgencyScore: number;
+  confidenceFactor: number;
+  finalScore: number;
 };
 
-type ScoredCard = {
-  id: string;
-  zone: 'center' | 'right';
-  score: number;
-  priority: number;
+type PolicyResult = {
+  preset: LayoutPlan['preset'];
+  activeCardId?: string;
+  forceDominantCenter?: CardId;
+  forceDominantRight?: CardId;
+  minimumSizeByCard: Partial<Record<CardId, CardSize>>;
 };
 
-const severityRank: Record<Severity, number> = {
+const severityBump: Record<Severity, number> = {
   none: 0,
-  low: 1,
-  medium: 2,
-  high: 3,
-  critical: 4
+  low: 5,
+  medium: 12,
+  high: 20,
+  critical: 32
 };
 
-const baseWeights: Record<string, number> = {
-  failures: 80,
-  approvals: 70,
-  alerts: 65,
-  reminders: 50,
-  workflows: 45,
-  timeline: 40,
-  world_tldr: 20,
-  system_overview: 55,
-  dialogue: 100
+const tieBreakOrder: CardId[] = [
+  'systemOverview',
+  'dialogue',
+  'failures',
+  'approvals',
+  'alerts',
+  'reminders',
+  'workflows',
+  'timeline',
+  'worldTldr'
+];
+
+const cardZones: Record<CardId, Zone> = {
+  systemOverview: 'center',
+  dialogue: 'center',
+  timeline: 'center',
+  worldTldr: 'center',
+  reminders: 'right',
+  alerts: 'right',
+  approvals: 'right',
+  workflows: 'right',
+  failures: 'right'
 };
 
-const basePriority: Record<string, number> = {
-  system_overview: 1,
-  timeline: 2,
-  world_tldr: 3,
-  dialogue: 0,
-  reminders: 10,
-  alerts: 11,
-  approvals: 12,
-  workflows: 13,
-  failures: 14
-};
+const dominantHoldSeconds = 45;
+const dominantSwitchDelta = 8;
 
-export function applyPolicies(signals: LayoutSignals): AllowedSet {
-  if (signals.dialogueOpen) {
-    return {
-      center: ['dialogue'],
-      right: [],
-      dialogueOnly: true
-    };
+function scoreForCard(signals: LayoutSignals, id: CardId): number {
+  switch (id) {
+    case 'failures':
+      return 70 + severityBump[signals.failuresSeverity] + Math.min(signals.failuresCount * 5, 20);
+    case 'approvals':
+      return 60 + Math.min(signals.approvalsPending * 8, 30);
+    case 'alerts':
+      return 55 + severityBump[signals.alertsSeverity] + Math.min(signals.alertsCount * 4, 16);
+    case 'reminders':
+      return 45 + Math.min(signals.remindersDueToday * 7, 28) + Math.min(signals.remindersCount * 2, 10);
+    case 'dialogue':
+      return signals.dialogueOpen ? 80 : 30;
+    case 'timeline':
+      return 35 + (signals.remindersDueToday > 0 ? 8 : 0);
+    case 'worldTldr':
+      return 20;
+    case 'systemOverview':
+      return 50;
+    case 'workflows':
+      return 40 + Math.min(signals.workflowsActive * 4, 16);
   }
-
-  return {
-    center: ['system_overview', 'timeline', 'world_tldr'],
-    right: ['reminders', 'alerts', 'approvals', 'workflows', 'failures'],
-    dialogueOnly: false
-  };
 }
 
-export function scoreCards(signals: LayoutSignals, allowed: AllowedSet): ScoredCard[] {
-  const scopedCards = [
-    ...allowed.center.map((id) => ({ id, zone: 'center' as const })),
-    ...allowed.right.map((id) => ({ id, zone: 'right' as const }))
-  ];
-
-  return scopedCards
-    .map(({ id, zone }) => {
-      let score = baseWeights[id] ?? 10;
-
-      if (id === 'failures' && signals.failuresCount > 0 && severityRank[signals.failuresSeverity] >= severityRank.high) {
-        score += 30;
-      }
-      if (id === 'approvals' && signals.approvalsPending > 0) {
-        score += 25;
-      }
-      if (id === 'alerts' && severityRank[signals.alertsSeverity] >= severityRank.medium) {
-        score += 20;
-      }
-      if (id === 'reminders' && signals.remindersCount > 0) {
-        score += 15;
-      }
-      if (signals.confidence === 'unstable' && (id === 'alerts' || id === 'failures')) {
-        score += 15;
-      }
-      if (signals.confidence === 'drifting' && id === 'alerts') {
-        score += 8;
-      }
-      if (id === 'workflows' && signals.workflowsActive > 0) {
-        score += 12;
-      }
-      if (id === 'timeline' && (signals.remindersCount + signals.workflowsActive) > 2) {
-        score += 10;
-      }
-
-      return {
-        id,
-        zone,
-        score,
-        priority: basePriority[id] ?? 999
-      };
-    })
-    .sort((a, b) => b.score - a.score || a.priority - b.priority || a.id.localeCompare(b.id));
-}
-
-export function choosePreset(signals: LayoutSignals): LayoutPlan['preset'] {
-  if (signals.dialogueOpen) return 'P3';
-
-  const density =
-    signals.remindersCount +
-    signals.alertsCount +
-    signals.failuresCount +
-    signals.approvalsPending +
-    signals.workflowsActive;
-
-  const mixedSignals = [signals.alertsCount > 0, signals.failuresCount > 0, signals.approvalsPending > 0, signals.workflowsActive > 0].filter(Boolean).length;
-
-  if (density >= 4 && mixedSignals >= 2) {
-    return 'P2';
-  }
-
-  return 'P1';
-}
-
-function toSize(score: number): CardSize {
-  if (score >= 120) return 'XL';
-  if (score >= 90) return 'L';
-  if (score >= 60) return 'M';
+function sizeFromScore(score: number): CardSize {
+  if (score >= 90) return 'XL';
+  if (score >= 70) return 'L';
+  if (score >= 50) return 'M';
   if (score >= 30) return 'S';
   return 'XS';
 }
 
-export function chooseSizesAndOrder(scored: ScoredCard[]): CardPlacement[] {
-  return scored
-    .map((card) => {
-      const size = toSize(card.score);
-      const colSpan = card.zone === 'right' ? 1 : size === 'XL' ? 2 : 1;
-
-      return {
-        id: card.id,
-        zone: card.zone,
-        size,
-        colSpan,
-        priority: card.priority
-      } as CardPlacement;
-    })
-    .sort((a, b) => a.zone.localeCompare(b.zone) || a.priority - b.priority || a.id.localeCompare(b.id));
+function maxSize(a: CardSize, b: CardSize): CardSize {
+  const rank: CardSize[] = ['XS', 'S', 'M', 'L', 'XL'];
+  return rank[Math.max(rank.indexOf(a), rank.indexOf(b))];
 }
 
-export function generateLayoutPlan(signals: LayoutSignals): LayoutPlan {
-  const allowed = applyPolicies(signals);
-  const preset = choosePreset(signals);
+function applyPolicies(signals: LayoutSignals): PolicyResult {
+  const result: PolicyResult = {
+    preset: 'P1',
+    minimumSizeByCard: { systemOverview: 'M' }
+  };
 
-  if (allowed.dialogueOnly) {
-    return {
-      preset,
-      activeCardId: 'dialogue',
-      generatedAt: signals.updatedAt,
-      ttlSeconds: 120,
-      placements: [
-        {
-          id: 'dialogue',
-          zone: 'center',
-          size: 'XL',
-          colSpan: 2,
-          priority: 0
-        }
-      ]
-    };
+  if (signals.dialogueOpen) {
+    if (signals.confidenceScore < 25) {
+      result.preset = 'P2';
+      result.forceDominantRight = 'failures';
+      result.minimumSizeByCard.dialogue = 'M';
+    } else {
+      result.preset = 'P3';
+      result.activeCardId = 'dialogue';
+      result.forceDominantCenter = 'dialogue';
+      result.minimumSizeByCard.dialogue = 'XL';
+    }
+  } else if (signals.confidence === 'unstable' || signals.confidenceScore < 40) {
+    result.preset = 'P2';
+    result.forceDominantRight = 'failures';
   }
 
-  const placements = chooseSizesAndOrder(scoreCards(signals, allowed));
+  return result;
+}
+
+function scoreCards(signals: LayoutSignals): CardScore[] {
+  const confidenceFactor = 0.6 + 0.4 * (signals.confidenceScore / 100);
+
+  return (Object.keys(cardZones) as CardId[])
+    .map((id) => {
+      const urgencyScore = scoreForCard(signals, id);
+      return {
+        id,
+        zone: cardZones[id],
+        urgencyScore,
+        confidenceFactor,
+        finalScore: urgencyScore * confidenceFactor
+      };
+    })
+    .sort((a, b) => {
+      if (b.finalScore !== a.finalScore) return b.finalScore - a.finalScore;
+      return tieBreakOrder.indexOf(a.id) - tieBreakOrder.indexOf(b.id);
+    });
+}
+
+function getPlacementScore(placements: CardPlacement[], id: string): number {
+  const sizeScore: Record<CardSize, number> = { XS: 20, S: 40, M: 60, L: 80, XL: 100 };
+  const match = placements.find((placement) => placement.id === id);
+  if (!match) return 0;
+  return sizeScore[match.size] - (match.collapsed ? 10 : 0);
+}
+
+function dominantCardForZone(placements: CardPlacement[], zone: Zone): string | undefined {
+  return placements
+    .filter((placement) => placement.zone === zone)
+    .sort((a, b) => getPlacementScore(placements, b.id) - getPlacementScore(placements, a.id) || a.priority - b.priority)[0]?.id;
+}
+
+function chooseSizesAndStacking(
+  scored: CardScore[],
+  policy: PolicyResult,
+  signals: LayoutSignals,
+  prev?: LayoutPlan
+): { placements: CardPlacement[]; activeCardId?: string } {
+  const center = scored.filter((card) => card.zone === 'center');
+  const right = scored.filter((card) => card.zone === 'right');
+
+  const topCenter = policy.forceDominantCenter ? center.find((card) => card.id === policy.forceDominantCenter) ?? center[0] : center[0];
+
+  const centerDominantTarget = topCenter?.id;
+  const prevCenterDominant = prev ? dominantCardForZone(prev.placements, 'center') : undefined;
+  const signalAge = prev ? Math.max(0, (signals.updatedAt - prev.generatedAt) / 1000) : dominantHoldSeconds + 1;
+
+  let dominantCenter = centerDominantTarget;
+  if (
+    prev &&
+    prevCenterDominant &&
+    centerDominantTarget &&
+    prevCenterDominant !== centerDominantTarget &&
+    signalAge < dominantHoldSeconds &&
+    signals.failuresSeverity !== 'critical'
+  ) {
+    const candidateScore = center.find((card) => card.id === centerDominantTarget)?.finalScore ?? 0;
+    const prevScore = center.find((card) => card.id === prevCenterDominant)?.finalScore ?? 0;
+    if (candidateScore - prevScore < dominantSwitchDelta) {
+      dominantCenter = prevCenterDominant as CardId;
+    }
+  }
+
+  const placements: CardPlacement[] = [];
+
+  const sortedCenter = [...center].sort((a, b) => {
+    if (a.id === dominantCenter) return -1;
+    if (b.id === dominantCenter) return 1;
+    if (b.finalScore !== a.finalScore) return b.finalScore - a.finalScore;
+    return tieBreakOrder.indexOf(a.id) - tieBreakOrder.indexOf(b.id);
+  });
+
+  sortedCenter.forEach((card, index) => {
+    let size = sizeFromScore(card.finalScore);
+    if (index === 0) {
+      size = card.finalScore >= 80 ? 'XL' : 'L';
+    } else if (index <= 2 && size === 'XS') {
+      size = 'S';
+    }
+
+    const minimumSize = policy.minimumSizeByCard[card.id];
+    if (minimumSize) size = maxSize(size, minimumSize);
+
+    placements.push({
+      id: card.id,
+      zone: 'center',
+      size,
+      collapsed: size === 'XS',
+      priority: index
+    });
+  });
+
+  const sortedRight = [...right].sort((a, b) => {
+    if (policy.forceDominantRight === a.id) return -1;
+    if (policy.forceDominantRight === b.id) return 1;
+    if (b.finalScore !== a.finalScore) return b.finalScore - a.finalScore;
+    return tieBreakOrder.indexOf(a.id) - tieBreakOrder.indexOf(b.id);
+  });
+
+  sortedRight.forEach((card, index) => {
+    let size = sizeFromScore(card.finalScore);
+    if (index === 0 && size === 'M') size = 'L';
+    if (policy.forceDominantRight === card.id) size = maxSize(size, 'L');
+
+    placements.push({
+      id: card.id,
+      zone: 'right',
+      size,
+      collapsed: size === 'XS',
+      priority: index
+    });
+  });
+
+  const nextActiveCardId = policy.activeCardId ?? (policy.preset === 'P2' ? dominantCenter : undefined);
+  return { placements, activeCardId: nextActiveCardId };
+}
+
+export function generateLayoutPlan(signals: LayoutSignals, prev?: LayoutPlan): LayoutPlan {
+  const policy = applyPolicies(signals);
+  const scored = scoreCards(signals);
+  const { placements, activeCardId } = chooseSizesAndStacking(scored, policy, signals, prev);
 
   return {
-    preset,
+    preset: policy.preset,
     placements,
+    activeCardId,
     generatedAt: signals.updatedAt,
-    ttlSeconds: 120
+    ttlSeconds: 300
   };
 }

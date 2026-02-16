@@ -1,8 +1,9 @@
 import type { LayoutSignals } from './signals';
 
-const scenarios: Omit<LayoutSignals, 'updatedAt' | 'dialogueOpen'>[] = [
-  {
-    remindersCount: 1,
+export function getInitialSignals(): LayoutSignals {
+  return {
+    remindersCount: 2,
+    remindersDueToday: 1,
     alertsCount: 1,
     alertsSeverity: 'low',
     failuresCount: 0,
@@ -10,46 +11,71 @@ const scenarios: Omit<LayoutSignals, 'updatedAt' | 'dialogueOpen'>[] = [
     approvalsPending: 1,
     workflowsActive: 2,
     confidence: 'stable',
-    focusMode: 'default'
-  },
-  {
-    remindersCount: 3,
-    alertsCount: 2,
-    alertsSeverity: 'medium',
-    failuresCount: 1,
-    failuresSeverity: 'high',
-    approvalsPending: 2,
-    workflowsActive: 2,
-    confidence: 'drifting',
-    focusMode: 'review'
-  },
-  {
-    remindersCount: 2,
-    alertsCount: 3,
-    alertsSeverity: 'high',
-    failuresCount: 2,
-    failuresSeverity: 'critical',
-    approvalsPending: 1,
-    workflowsActive: 1,
-    confidence: 'unstable',
-    focusMode: 'recovery'
-  }
-];
-
-export function getInitialSignals(): LayoutSignals {
-  return {
-    ...scenarios[0],
+    confidenceScore: 82,
     dialogueOpen: false,
-    updatedAt: Date.now()
+    focusMode: 'default',
+    updatedAt: 1_000
   };
 }
 
 export function simulateUpdate(prev: LayoutSignals): LayoutSignals {
-  const nextIdx = (Math.floor(prev.updatedAt / 1000) + 1) % scenarios.length;
+  const phase = Math.floor(prev.updatedAt / 1_000) % 4;
+
+  if (phase === 0) {
+    return {
+      ...prev,
+      failuresCount: 2,
+      failuresSeverity: 'high',
+      alertsCount: 2,
+      alertsSeverity: 'medium',
+      approvalsPending: prev.approvalsPending + 1,
+      confidence: 'drifting',
+      confidenceScore: 56,
+      focusMode: 'review',
+      updatedAt: prev.updatedAt + 1_000
+    };
+  }
+
+  if (phase === 1) {
+    return {
+      ...prev,
+      failuresCount: 3,
+      failuresSeverity: 'critical',
+      approvalsPending: prev.approvalsPending + 1,
+      remindersDueToday: Math.min(prev.remindersDueToday + 1, prev.remindersCount + 1),
+      confidence: 'unstable',
+      confidenceScore: 28,
+      focusMode: 'recovery',
+      updatedAt: prev.updatedAt + 1_000
+    };
+  }
+
+  if (phase === 2) {
+    return {
+      ...prev,
+      failuresCount: 1,
+      failuresSeverity: 'medium',
+      alertsCount: 1,
+      alertsSeverity: 'low',
+      approvalsPending: Math.max(0, prev.approvalsPending - 1),
+      confidence: 'drifting',
+      confidenceScore: 48,
+      focusMode: 'focus',
+      updatedAt: prev.updatedAt + 1_000
+    };
+  }
 
   return {
-    ...scenarios[nextIdx],
-    dialogueOpen: prev.dialogueOpen,
-    updatedAt: prev.updatedAt + 1000
+    ...prev,
+    failuresCount: 0,
+    failuresSeverity: 'none',
+    remindersDueToday: 1,
+    approvalsPending: 1,
+    alertsCount: 1,
+    alertsSeverity: 'low',
+    confidence: 'stable',
+    confidenceScore: 86,
+    focusMode: 'default',
+    updatedAt: prev.updatedAt + 1_000
   };
 }

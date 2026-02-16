@@ -3,64 +3,66 @@ import { generateLayoutPlan } from './engine';
 import type { LayoutSignals } from './signals';
 
 const baseSignals: LayoutSignals = {
-  remindersCount: 1,
+  remindersCount: 2,
+  remindersDueToday: 1,
   alertsCount: 1,
   alertsSeverity: 'low',
   failuresCount: 0,
   failuresSeverity: 'none',
-  approvalsPending: 0,
+  approvalsPending: 1,
   workflowsActive: 1,
   confidence: 'stable',
+  confidenceScore: 82,
   dialogueOpen: false,
   focusMode: 'default',
   updatedAt: 1000
 };
 
-describe('layout engine phase 4B', () => {
-  it('dialogueOpen -> dialogue card XL full width and active id', () => {
-    const plan = generateLayoutPlan({ ...baseSignals, dialogueOpen: true });
-
-    expect(plan.activeCardId).toBe('dialogue');
-    expect(plan.placements).toEqual([
-      expect.objectContaining({ id: 'dialogue', size: 'XL', colSpan: 2, zone: 'center' })
-    ]);
-  });
-
-  it('high severity failures are at least large', () => {
-    const plan = generateLayoutPlan({ ...baseSignals, failuresCount: 2, failuresSeverity: 'high', confidence: 'unstable' });
-    const failures = plan.placements.find((placement) => placement.id === 'failures');
-
-    expect(failures).toBeDefined();
-    expect(['L', 'XL']).toContain(failures?.size);
-  });
-
-  it('approvals pending keeps approvals visible at least S', () => {
-    const plan = generateLayoutPlan({ ...baseSignals, approvalsPending: 1 });
-    const approvals = plan.placements.find((placement) => placement.id === 'approvals');
-
-    expect(approvals).toBeDefined();
-    expect(['S', 'M', 'L', 'XL']).toContain(approvals?.size);
-  });
-
-  it('chooses P2 for mixed active signals', () => {
-    const plan = generateLayoutPlan({
-      ...baseSignals,
-      remindersCount: 2,
-      alertsCount: 2,
-      alertsSeverity: 'medium',
-      failuresCount: 1,
-      failuresSeverity: 'high',
-      approvalsPending: 1,
-      workflowsActive: 2
-    });
-
+describe('layout engine phase 4B hybrid policy + scoring', () => {
+  it('unstable confidence selects preset P2', () => {
+    const plan = generateLayoutPlan({ ...baseSignals, confidence: 'unstable', confidenceScore: 35 });
     expect(plan.preset).toBe('P2');
   });
 
-  it('is deterministic for same signals', () => {
+  it('dialogue open with high confidence selects P3 and dialogue XL active', () => {
+    const plan = generateLayoutPlan({ ...baseSignals, dialogueOpen: true, confidenceScore: 88, updatedAt: 2000 });
+    const dialogue = plan.placements.find((placement) => placement.id === 'dialogue');
+
+    expect(plan.preset).toBe('P3');
+    expect(plan.activeCardId).toBe('dialogue');
+    expect(dialogue?.size).toBe('XL');
+  });
+
+  it('high failure severity makes failures largest right-side card', () => {
+    const plan = generateLayoutPlan({
+      ...baseSignals,
+      failuresCount: 3,
+      failuresSeverity: 'high',
+      alertsCount: 1,
+      approvalsPending: 1,
+      updatedAt: 3000
+    });
+
+    const rightCards = plan.placements.filter((placement) => placement.zone === 'right').sort((a, b) => a.priority - b.priority);
+    expect(rightCards[0]?.id).toBe('failures');
+    expect(['L', 'XL']).toContain(rightCards[0]?.size);
+  });
+
+  it('same signals twice returns identical plan', () => {
     const a = generateLayoutPlan(baseSignals);
     const b = generateLayoutPlan(baseSignals);
-
     expect(a).toEqual(b);
+  });
+
+  it('hysteresis keeps dominant card stable for tiny deltas', () => {
+    const first = generateLayoutPlan({ ...baseSignals, remindersDueToday: 2, updatedAt: 10_000 });
+    const second = generateLayoutPlan(
+      { ...baseSignals, remindersDueToday: 3, alertsCount: 2, updatedAt: 10_020 },
+      first
+    );
+
+    const dominantFirst = first.placements.find((placement) => placement.zone === 'center' && placement.priority === 0)?.id;
+    const dominantSecond = second.placements.find((placement) => placement.zone === 'center' && placement.priority === 0)?.id;
+    expect(dominantSecond).toBe(dominantFirst);
   });
 });
