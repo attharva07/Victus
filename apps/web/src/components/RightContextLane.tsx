@@ -39,6 +39,8 @@ export default function RightContextLane({
   actions: ContextActionHandlers;
 }) {
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(['alerts']));
+  const [resolvingIds, setResolvingIds] = useState<Set<string>>(new Set());
+  const [feedback, setFeedback] = useState<string | null>(null);
 
   const visibleSections = useMemo(() => {
     const available = sectionOrder.filter((id) => orderedCardIds.includes(id));
@@ -59,12 +61,35 @@ export default function RightContextLane({
     });
   };
 
+  const handleApprovalResolution = (item: VictusItem, decision: 'approved' | 'denied') => {
+    setResolvingIds((previous) => new Set(previous).add(item.id));
+
+    window.setTimeout(() => {
+      if (decision === 'approved') {
+        actions.onApprove(item.id);
+      } else {
+        actions.onDeny(item.id);
+      }
+      onHighlight(undefined);
+      setResolvingIds((previous) => {
+        const next = new Set(previous);
+        next.delete(item.id);
+        return next;
+      });
+      setFeedback(`Approval resolved (${decision})`);
+      window.setTimeout(() => setFeedback(null), 1600);
+    }, 220);
+  };
+
   return (
     <aside className="h-full overflow-hidden rounded-2xl border border-borderSoft/60 bg-panel/30 p-3">
       <section data-testid="context-stack-container" className="flex h-full flex-col rounded-xl border border-borderSoft/70 bg-panel/80 px-3 py-2">
         <header className="mb-2 flex items-center justify-between">
           <h2 className="text-xs uppercase tracking-[0.15em] text-slate-300">Context Stack</h2>
-          <span className="text-[10px] text-slate-500">{visibleSections.length} sections</span>
+          <div className="flex items-center gap-2">
+            {feedback && <span className="rounded-full border border-emerald-600/30 px-2 py-0.5 text-[10px] text-emerald-200">{feedback}</span>}
+            <span className="text-[10px] text-slate-500">{visibleSections.length} sections</span>
+          </div>
         </header>
 
         <div data-testid="right-context-scroll" className="thin-scroll flex h-full flex-col gap-2 overflow-y-auto pr-1 pb-24">
@@ -78,12 +103,19 @@ export default function RightContextLane({
                   <p className="text-[10px] text-slate-500">{cardItems.length}</p>
                 </button>
 
-                {isExpanded && (
-                  <ul className="mt-2 space-y-2">
+                <div
+                  className={`grid overflow-hidden transition-all duration-300 ease-out ${isExpanded ? 'mt-2 grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`}
+                >
+                  <ul className="min-h-0 space-y-2">
                     {cardItems.map((item) => {
                       const highlighted = highlightedId === item.id;
+                      const isResolving = resolvingIds.has(item.id);
+
                       return (
-                        <li key={item.id}>
+                        <li
+                          key={item.id}
+                          className={`overflow-hidden transition-all duration-200 ${isResolving ? 'max-h-0 opacity-0' : 'max-h-48 opacity-100'}`}
+                        >
                           <button
                             className={`w-full rounded-md border px-2 py-1.5 text-left ${highlighted ? 'border-cyan-500/60 bg-cyan-950/20 text-cyan-100' : 'border-borderSoft/60 bg-panel text-slate-300 hover:border-slate-500'}`}
                             onClick={(event) => {
@@ -94,6 +126,29 @@ export default function RightContextLane({
                             <p className="text-xs">{item.title}</p>
                             <p className="mt-0.5 text-[10px] uppercase tracking-wide text-slate-500">{item.timeLabel}</p>
                           </button>
+
+                          {item.kind === 'approval' && (
+                            <div className="mt-1 flex gap-1">
+                              <button
+                                className="rounded border border-emerald-600/40 px-2 py-0.5 text-[10px] text-emerald-200"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  handleApprovalResolution(item, 'approved');
+                                }}
+                              >
+                                Approve
+                              </button>
+                              <button
+                                className="rounded border border-rose-600/40 px-2 py-0.5 text-[10px] text-rose-200"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  handleApprovalResolution(item, 'denied');
+                                }}
+                              >
+                                Deny
+                              </button>
+                            </div>
+                          )}
 
                           {highlighted && (
                             <div className="mt-1 rounded-md border border-borderSoft/60 bg-black/20 px-2 py-1 text-xs text-slate-300">
@@ -109,28 +164,6 @@ export default function RightContextLane({
                                   >
                                     mark done
                                   </button>
-                                )}
-                                {item.kind === 'approval' && (
-                                  <>
-                                    <button
-                                      className="rounded border border-emerald-600/40 px-2 py-0.5 text-[10px] text-emerald-200"
-                                      onClick={(event) => {
-                                        event.stopPropagation();
-                                        actions.onApprove(item.id);
-                                      }}
-                                    >
-                                      approve
-                                    </button>
-                                    <button
-                                      className="rounded border border-rose-600/40 px-2 py-0.5 text-[10px] text-rose-200"
-                                      onClick={(event) => {
-                                        event.stopPropagation();
-                                        actions.onDeny(item.id);
-                                      }}
-                                    >
-                                      deny
-                                    </button>
-                                  </>
                                 )}
                                 {item.kind === 'alert' && (
                                   <button
@@ -150,7 +183,7 @@ export default function RightContextLane({
                       );
                     })}
                   </ul>
-                )}
+                </div>
               </section>
             );
           })}

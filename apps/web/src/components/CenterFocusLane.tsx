@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { VictusItem } from '../data/victusStore';
 import type { CardState, LayoutPlan, VictusCardId } from '../layout/types';
 import { worldTldrEntries } from '../data/victusStore';
@@ -59,18 +59,58 @@ function LaneCard({
   onToggle: () => void;
   children: ReactNode;
 }) {
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [contentOverflows, setContentOverflows] = useState(false);
+
+  useEffect(() => {
+    const node = contentRef.current;
+    if (!node) return;
+
+    const measure = () => {
+      setContentOverflows(node.scrollHeight > node.clientHeight + 1);
+    };
+
+    measure();
+    const raf = window.requestAnimationFrame(measure);
+    window.addEventListener('resize', measure);
+
+    return () => {
+      window.cancelAnimationFrame(raf);
+      window.removeEventListener('resize', measure);
+    };
+  }, [children, state]);
+
   return (
     <article
       data-testid={`center-card-${id}`}
       data-card-state={state}
       className={`w-full rounded-xl border border-borderSoft/70 bg-panel px-4 py-3 transition ${cardShellClass(state, id)} ${state === 'focus' ? 'ring-1 ring-cyan-500/30' : ''}`}
-      onClick={onToggle}
     >
-      <header className="flex items-center justify-between gap-3">
+      <header
+        data-testid={`center-card-header-${id}`}
+        className="flex cursor-pointer items-center justify-between gap-3"
+        onClick={onToggle}
+      >
         <h2 className="text-sm font-semibold text-slate-100">{titleFor(id)}</h2>
-        <span className="text-[10px] uppercase tracking-[0.15em] text-slate-500">{state}</span>
+        <div className="flex items-center gap-2">
+          {contentOverflows && state === 'peek' && (
+            <button
+              type="button"
+              data-testid={`center-card-expand-${id}`}
+              className="rounded border border-borderSoft/70 px-2 py-0.5 text-[10px] uppercase tracking-wide text-slate-300"
+              onClick={(event) => {
+                event.stopPropagation();
+                onToggle();
+              }}
+            >
+              Expand
+            </button>
+          )}
+          <span className="text-[10px] uppercase tracking-[0.15em] text-slate-500">{state}</span>
+        </div>
       </header>
       <div
+        ref={contentRef}
         data-testid={`center-card-content-${id}`}
         className={`mt-3 ${state === 'focus' ? 'thin-scroll overflow-y-auto pr-1' : 'overflow-hidden'}`}
       >
@@ -116,7 +156,7 @@ export default function CenterFocusLane({
   upcoming: VictusItem[];
   outcomes: OutcomeBuckets;
   dialogueMessages: DialogueMessage[];
-  onToggleCard: (cardId: string) => void;
+  onToggleCard: (cardId: VictusCardId) => void;
 }) {
   const compactIds = plan.compactCardIds;
   const visibleSupporting = useMemo(() => plan.supportingCardIds.slice(0, 4), [plan.supportingCardIds]);

@@ -347,6 +347,36 @@ const patchItem = (state: VictusState, id: string, patch: Partial<VictusItem>): 
 
 const removeFromLists = (list: string[], id: string) => list.filter((entry) => entry !== id);
 
+const appendSystemTimelineEvent = (state: VictusState, title: string, detail: string): VictusState => {
+  const timestamp = Date.now();
+  const eventId = `sys-${timestamp}`;
+  const event: VictusItem = {
+    id: eventId,
+    kind: 'event',
+    title,
+    detail,
+    timeLabel: 'Just now',
+    type: 'system',
+    source: 'Context Stack',
+    domain: 'Automation',
+    createdAt: stamp(),
+    updatedAt: stamp(),
+    status: 'active'
+  };
+
+  return {
+    ...state,
+    items: {
+      ...state.items,
+      [eventId]: event
+    },
+    timeline: {
+      ...state.timeline,
+      today: [eventId, ...state.timeline.today]
+    }
+  };
+};
+
 export const markDone = (state: VictusState, id: string): VictusState => {
   if (!state.items[id]) return state;
 
@@ -411,9 +441,28 @@ export const pinToReminders = (state: VictusState, id: string): VictusState => {
 
 export const snooze = (state: VictusState, id: string): VictusState => patchItem(state, id, { snoozedUntil: 'Tomorrow 9:00 AM' });
 
-export const approve = (state: VictusState, id: string): VictusState => patchItem(state, id, { approvalState: 'approved' });
+const resolveApproval = (state: VictusState, id: string, decision: 'approved' | 'denied'): VictusState => {
+  const approval = state.items[id];
+  if (!approval) return state;
 
-export const deny = (state: VictusState, id: string): VictusState => patchItem(state, id, { approvalState: 'denied' });
+  const withDecision = patchItem(state, id, { approvalState: decision, status: 'resolved' });
+  const trimmed = {
+    ...withDecision,
+    contextCards: withDecision.contextCards.map((card) =>
+      card.kind === 'approvals' ? { ...card, itemIds: removeFromLists(card.itemIds, id) } : card
+    )
+  };
+
+  return appendSystemTimelineEvent(
+    trimmed,
+    `Approval resolved: ${approval.title} (${decision})`,
+    `Approval ${approval.title} was ${decision} from Context Stack.`
+  );
+};
+
+export const approve = (state: VictusState, id: string): VictusState => resolveApproval(state, id, 'approved');
+
+export const deny = (state: VictusState, id: string): VictusState => resolveApproval(state, id, 'denied');
 
 export const toggleWorkflow = (state: VictusState, id: string): VictusState => {
   const workflow = state.items[id];

@@ -20,6 +20,7 @@ import {
 import { generateLayoutPlan } from './layout/engine';
 import { getInitialSignals, simulateUpdate } from './layout/mockSignals';
 import type { LayoutSignals } from './layout/signals';
+import type { VictusCardId } from './layout/types';
 
 type DialogueMessage = {
   id: string;
@@ -94,6 +95,7 @@ function App() {
   const [dialogueMessages, setDialogueMessages] = useState<DialogueMessage[]>(dialogueSeed);
   const [signals, setSignals] = useState<LayoutSignals>(getInitialSignals());
   const [highlightedContextItemId, setHighlightedContextItemId] = useState<string | undefined>();
+  const [expandedCenterCardId, setExpandedCenterCardId] = useState<VictusCardId | undefined>();
 
   const timeline = useMemo(
     () => ({
@@ -118,6 +120,24 @@ function App() {
   );
 
   const plan = useMemo(() => generateLayoutPlan(signals), [signals]);
+
+  const displayPlan = useMemo(() => {
+    if (!expandedCenterCardId) {
+      return plan;
+    }
+
+    return {
+      ...plan,
+      cardStates: {
+        ...plan.cardStates,
+        ...Object.fromEntries(
+          [plan.dominantCardId, ...plan.supportingCardIds]
+            .filter((cardId) => plan.cardStates[cardId] !== 'chip')
+            .map((cardId) => [cardId, cardId === expandedCenterCardId ? 'focus' : 'peek'])
+        )
+      }
+    };
+  }, [expandedCenterCardId, plan]);
 
   const onMutateState = (mutator: (current: VictusState) => VictusState) => {
     setState((current) => {
@@ -145,6 +165,10 @@ function App() {
     }));
 
     setActiveView('overview');
+  };
+
+  const toggleCenterCard = (cardId: VictusCardId) => {
+    setExpandedCenterCardId((current) => (current === cardId ? undefined : cardId));
   };
 
   const simulate = () => {
@@ -185,13 +209,13 @@ function App() {
           {activeView === 'overview' ? (
             <div className="grid h-full grid-cols-[minmax(0,1fr)_320px] gap-4">
               <CenterFocusLane
-                plan={plan}
+                plan={displayPlan}
                 signals={signals}
                 today={timeline.today}
                 upcoming={timeline.upcoming}
                 outcomes={outcomes}
                 dialogueMessages={dialogueMessages}
-                onToggleCard={() => undefined}
+                onToggleCard={toggleCenterCard}
               />
               <RightContextLane
                 orderedCardIds={plan.rightContextCardIds}
