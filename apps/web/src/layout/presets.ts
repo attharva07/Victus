@@ -3,16 +3,16 @@ import type { LayoutPlan } from './types';
 export const defaultLayoutPlan: LayoutPlan = {
   preset: 'P2',
   generatedAt: Date.now(),
-  ttlSeconds: 120,
+  ttlSeconds: 300,
   placements: [
-    { id: 'system_overview', zone: 'center', size: 'L', colSpan: 1, priority: 1 },
-    { id: 'timeline', zone: 'center', size: 'M', colSpan: 1, priority: 2 },
-    { id: 'world_tldr', zone: 'center', size: 'S', colSpan: 1, priority: 3 },
-    { id: 'reminders', zone: 'right', size: 'S', colSpan: 1, priority: 10 },
-    { id: 'alerts', zone: 'right', size: 'S', colSpan: 1, priority: 11 },
-    { id: 'approvals', zone: 'right', size: 'S', colSpan: 1, priority: 12 },
-    { id: 'workflows', zone: 'right', size: 'S', colSpan: 1, priority: 13 },
-    { id: 'failures', zone: 'right', size: 'S', colSpan: 1, priority: 14 }
+    { id: 'systemOverview', zone: 'center', size: 'L', priority: 0 },
+    { id: 'timeline', zone: 'center', size: 'M', priority: 1 },
+    { id: 'worldTldr', zone: 'center', size: 'S', priority: 2 },
+    { id: 'reminders', zone: 'right', size: 'S', priority: 0 },
+    { id: 'alerts', zone: 'right', size: 'S', priority: 1 },
+    { id: 'approvals', zone: 'right', size: 'S', priority: 2 },
+    { id: 'workflows', zone: 'right', size: 'S', priority: 3 },
+    { id: 'failures', zone: 'right', size: 'S', priority: 4 }
   ]
 };
 

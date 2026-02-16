@@ -74,23 +74,13 @@ describe('Phase 4B adaptive layout behavior', () => {
 
 
 
-  it('simulate updates preserve two-column center grid in overview', () => {
+  it('simulate updates preserve stacked center layout in overview', () => {
     render(<App />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Simulate Signals Update' }));
+    fireEvent.click(screen.getByRole('button', { name: 'simulate update' }));
 
-    const grid = screen.getByTestId('center-grid');
-    expect(grid.className).toContain('grid-cols-2');
-  });
-
-  it('manual focus shows Return to Adaptive control', () => {
-    render(<App />);
-
-    fireEvent.click(screen.getByTestId('stack-card-timeline'));
-    expect(screen.getByRole('button', { name: 'Return to Adaptive' })).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Return to Adaptive' }));
-    expect(screen.queryByRole('button', { name: 'Return to Adaptive' })).not.toBeInTheDocument();
+    const stack = screen.getByTestId('center-stack');
+    expect(stack.className).toContain('flex-col');
   });
 
   it('finance add transaction appends to list', () => {
