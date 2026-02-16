@@ -1,38 +1,21 @@
-import { buildLayoutPlan, needsUrgentRecompute } from './engine';
-import type { WidgetRuntimeSignals } from './types';
+import { buildLayoutPlan } from './engine';
+import { initialMockState } from '../state/mockState';
 
-describe('adaptive layout engine', () => {
-  const signals: WidgetRuntimeSignals = {
-    dialogue: { urgency: 20, confidence: 80, role: 'secondary' },
-    systemOverview: { urgency: 42, confidence: 72, role: 'secondary' },
-    timeline: { urgency: 56, confidence: 70, role: 'primary' },
-    healthPulse: { urgency: 48, confidence: 68, role: 'primary' },
-    reminders: { urgency: 55, confidence: 62, role: 'secondary' },
-    alerts: { urgency: 54, confidence: 64, role: 'secondary' },
-    approvals: { urgency: 80, confidence: 66, role: 'primary' },
-    workflows: { urgency: 36, confidence: 72, role: 'tertiary' },
-    failures: { urgency: 58, confidence: 59, role: 'primary' }
-  };
+describe('widget registry layout selection', () => {
+  it('always includes pinned widgets even when rule would hide them', () => {
+    const state = { ...initialMockState, workflows: [], lastUserInputAt: 0 };
+    const plan = buildLayoutPlan(state, ['dialogue', 'workflowsBoard']);
+    const focusIds = plan.focusPlacements.map((entry) => entry.id);
 
-  it('is deterministic for same signals', () => {
-    const a = buildLayoutPlan(signals);
-    const b = buildLayoutPlan(signals);
-
-    expect(a.focusPlacements).toEqual(b.focusPlacements);
-    expect(a.contextOrder).toEqual(b.contextOrder);
+    expect(focusIds).toContain('dialogue');
+    expect(focusIds).toContain('workflowsBoard');
   });
 
-  it('packs focus widgets into deterministic two-column masonry', () => {
-    const plan = buildLayoutPlan(signals);
-    const placements = plan.focusPlacements;
+  it('shows workflows board only when workflows exist or pinned', () => {
+    const hiddenPlan = buildLayoutPlan({ ...initialMockState, workflows: [] }, []);
+    expect(hiddenPlan.focusPlacements.map((entry) => entry.id)).not.toContain('workflowsBoard');
 
-    expect(placements.every((entry) => ['left', 'right'].includes(entry.column))).toBe(true);
-    expect(placements[0]?.role).toBe('primary');
-  });
-
-  it('triggers urgent recompute for high urgency approvals/failures', () => {
-    expect(needsUrgentRecompute({ approvals: { urgency: 90 } })).toBe(true);
-    expect(needsUrgentRecompute({ failures: { urgency: 84 } })).toBe(true);
-    expect(needsUrgentRecompute({ reminders: { urgency: 20 } })).toBe(false);
+    const visiblePlan = buildLayoutPlan({ ...initialMockState, workflows: [] }, ['workflowsBoard']);
+    expect(visiblePlan.focusPlacements.map((entry) => entry.id)).toContain('workflowsBoard');
   });
 });

@@ -20,7 +20,11 @@ const titleMap: Record<VictusCardId, string> = {
   systemOverview: 'System Overview',
   dialogue: 'Dialogue',
   timeline: 'Timeline',
-  worldTldr: 'World TLDR'
+  worldTldr: 'World TLDR',
+  healthPulse: 'Health Pulse',
+  workflowsBoard: 'Workflows Board',
+  remindersPanel: 'Reminders Panel',
+  approvalsPanel: 'Approvals Panel'
 };
 
 export default function RightContextLane({
