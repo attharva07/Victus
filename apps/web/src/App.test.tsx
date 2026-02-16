@@ -1,51 +1,54 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import App from './App';
 
-describe('Phase 4A.1 stage behavior', () => {
-  it('renders multiple center cards at once', () => {
+describe('Phase 4A.2 behavior', () => {
+  it('right stack focus mode enables internal scroll container and shows collapse controls', () => {
     render(<App />);
 
-    expect(screen.getByText('System Overview')).toBeInTheDocument();
-    expect(screen.getByText('Timeline')).toBeInTheDocument();
-    expect(screen.getByText('World TLDR')).toBeInTheDocument();
+    const remindersLabel = screen.getByRole('button', { name: 'Reminders' });
+    const remindersCard = remindersLabel.closest('section');
+    expect(remindersCard).toBeTruthy();
+
+    const expandButton = within(remindersCard as HTMLElement).getByRole('button', { name: 'Expand' });
+    fireEvent.click(expandButton);
+
+    expect(screen.getByRole('button', { name: /collapse/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /back/i })).toBeInTheDocument();
+
+    const focusedBody = screen.getByTestId('focused-rightstack-body');
+    expect(focusedBody.className).toContain('overflow-y-auto');
+    expect(focusedBody.className).toContain('thin-scroll');
   });
 
-  it('keyboard shift changes active card', () => {
+  it('left rail navigation switches to memories view and renders search input', () => {
     render(<App />);
 
-    const stack = screen.getByLabelText('Center Card Stack');
-    stack.focus();
+    fireEvent.click(screen.getByRole('button', { name: 'Memories' }));
 
-    const systemCard = screen.getByTestId('stack-card-system_overview');
-    const timelineCard = screen.getByTestId('stack-card-timeline');
-
-    expect(systemCard).toHaveAttribute('data-active', 'true');
-    expect(timelineCard).toHaveAttribute('data-active', 'false');
-
-    fireEvent.keyDown(stack, { key: 'ArrowDown', code: 'ArrowDown' });
-
-    expect(systemCard).toHaveAttribute('data-active', 'false');
-    expect(timelineCard).toHaveAttribute('data-active', 'true');
+    expect(screen.getByLabelText('Search memories')).toBeInTheDocument();
   });
 
-  it('expand sets focused XL card state', () => {
+  it('memories search filters list', () => {
     render(<App />);
 
-    fireEvent.click(screen.getAllByRole('button', { name: 'Expand' })[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Memories' }));
+    fireEvent.change(screen.getByLabelText('Search memories'), { target: { value: 'incident' } });
 
-    expect(screen.getByRole('button', { name: 'Collapse' })).toBeInTheDocument();
-    expect(screen.getByTestId('stack-card-system_overview').className).toContain('h-[72vh]');
+    expect(screen.getByText('Infra incident follow-up')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Q2 Planning Principles/i })).not.toBeInTheDocument();
   });
 
-  it('command dock is always present', () => {
+  it('finance add transaction appends to list', () => {
     render(<App />);
 
-    const input = screen.getByLabelText('Command dock');
-    expect(input).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Finance' }));
 
-    fireEvent.keyDown(screen.getByLabelText('Center Card Stack'), { key: 'ArrowDown', code: 'ArrowDown' });
-    fireEvent.click(screen.getAllByRole('button', { name: 'Expand' })[0]);
+    fireEvent.change(screen.getByLabelText('Transaction label'), { target: { value: 'Book sale' } });
+    fireEvent.change(screen.getByLabelText('Transaction amount'), { target: { value: '45' } });
+    fireEvent.change(screen.getByLabelText('Transaction type'), { target: { value: 'income' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add transaction' }));
 
-    expect(screen.getByLabelText('Command dock')).toBeInTheDocument();
+    expect(screen.getByText('Book sale')).toBeInTheDocument();
+    expect(screen.getByText('4 entries')).toBeInTheDocument();
   });
 });

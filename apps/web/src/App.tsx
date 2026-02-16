@@ -4,23 +4,16 @@ import CardStack from './components/CardStack';
 import CommandDock from './components/CommandDock';
 import LeftRail, { type VictusView } from './components/LeftRail';
 import RightStack from './components/RightStack';
+import CameraScreen from './views/CameraScreen';
+import FilesScreen from './views/FilesScreen';
+import FinanceScreen from './views/FinanceScreen';
+import MemoriesScreen from './views/MemoriesScreen';
 import defaultLayoutPlan from './layout/presets';
 import {
   addCommandEvent,
   initialVictusState,
   type VictusState
 } from './data/victusStore';
-
-function PlaceholderView({ title }: { title: string }) {
-  return (
-    <div className="flex h-full items-center justify-center rounded-xl border border-borderSoft/80 bg-panel">
-      <div>
-        <h2 className="text-lg font-medium text-slate-100">{title}</h2>
-        <p className="mt-2 text-sm text-slate-400">Command surface for this domain is being prepared.</p>
-      </div>
-    </div>
-  );
-}
 
 function App() {
   const [state, setState] = useState<VictusState>(initialVictusState);
@@ -47,23 +40,32 @@ function App() {
     [state]
   );
 
+  const renderView = () => {
+    if (activeView === 'overview') {
+      return (
+        <CardStack
+          today={timeline.today}
+          upcoming={timeline.upcoming}
+          completed={timeline.completed}
+          selectedId={selectedId ?? undefined}
+          onSelect={setSelectedId}
+        />
+      );
+    }
+
+    if (activeView === 'memories') return <MemoriesScreen />;
+    if (activeView === 'finance') return <FinanceScreen />;
+    if (activeView === 'files') return <FilesScreen />;
+    return <CameraScreen />;
+  };
+
   return (
     <div className="h-screen overflow-hidden bg-bg text-slate-200">
       <div className="grid h-full grid-cols-[64px_minmax(0,1fr)_320px] gap-4 px-3 pb-28 pt-3">
         <LeftRail activeView={activeView} onChangeView={(view) => setActiveView(view)} />
 
         <main className="h-full overflow-hidden">
-          {activeView === 'overview' ? (
-            <CardStack
-              today={timeline.today}
-              upcoming={timeline.upcoming}
-              completed={timeline.completed}
-              selectedId={selectedId ?? undefined}
-              onSelect={setSelectedId}
-            />
-          ) : (
-            <PlaceholderView title={activeView.charAt(0).toUpperCase() + activeView.slice(1)} />
-          )}
+          {renderView()}
         </main>
 
         <section className="h-full overflow-hidden">
