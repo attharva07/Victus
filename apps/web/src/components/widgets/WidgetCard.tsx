@@ -9,7 +9,9 @@ export default function WidgetCard({
   pinned,
   onTogglePin,
   testId,
-  defaultExpanded = false
+  defaultExpanded = false,
+  scrollBody = true,
+  className
 }: {
   title: string;
   children: ReactNode;
@@ -18,6 +20,8 @@ export default function WidgetCard({
   onTogglePin?: () => void;
   testId: string;
   defaultExpanded?: boolean;
+  scrollBody?: boolean;
+  className?: string;
 }) {
   const [expanded, setExpanded] = useState(defaultExpanded);
   const [showExpand, setShowExpand] = useState(canExpand);
@@ -53,8 +57,14 @@ export default function WidgetCard({
     setExpanded((previous) => !previous);
   };
 
+  const bodyClass = expanded
+    ? scrollBody
+      ? 'max-h-[420px] overflow-y-auto thin-scroll'
+      : 'overflow-visible'
+    : 'max-h-28 overflow-hidden';
+
   return (
-    <article data-testid={testId} data-expanded={expanded ? 'true' : 'false'} className="rounded-xl border border-borderSoft/70 bg-panel/80 p-3 transition">
+    <article data-testid={testId} data-expanded={expanded ? 'true' : 'false'} className={`rounded-xl border border-borderSoft/70 bg-panel/80 p-3 transition ${className ?? ''}`}>
       <header
         data-testid={`${testId}-header`}
         className={`mb-2 flex min-h-7 items-center justify-between ${togglable ? 'cursor-pointer' : ''}`}
@@ -90,12 +100,7 @@ export default function WidgetCard({
         </div>
       </header>
 
-      <div
-        ref={contentRef}
-        data-testid={`${testId}-body`}
-        className={`${expanded ? 'max-h-[420px] overflow-y-auto thin-scroll' : 'max-h-28 overflow-hidden'} transition-all duration-200`}
-        onClick={handleToggleFromContainer}
-      >
+      <div ref={contentRef} data-testid={`${testId}-body`} className={`${bodyClass} transition-all duration-200`} onClick={handleToggleFromContainer}>
         {children}
       </div>
     </article>

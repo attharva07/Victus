@@ -1,19 +1,39 @@
 import { useMemo, useState } from 'react';
 import type { MockUiState } from '../state/mockState';
 import { buildLayoutPlan } from './engine';
-import type { LayoutPlan, WidgetId } from './types';
+import type { FocusPinMap, FocusPlacement, LayoutPlan, WidgetId } from './types';
 
-const STORAGE_KEY = 'victus.layout.pinned';
+const STORAGE_KEY = 'victus.layout.focusPins';
 
-function readPinned(): WidgetId[] {
+function readPins(): FocusPinMap {
   const raw = window.localStorage.getItem(STORAGE_KEY);
-  if (!raw) return [];
+  if (!raw) return {};
+
   try {
-    const parsed = JSON.parse(raw) as WidgetId[];
-    return Array.isArray(parsed) ? parsed : [];
+    const parsed = JSON.parse(raw) as FocusPinMap | WidgetId[];
+
+    if (Array.isArray(parsed)) {
+      return parsed.reduce<FocusPinMap>((acc, id, index) => {
+        acc[id] = { pinned: true, col: 0, order: index, anchor: 'normal' };
+        return acc;
+      }, {});
+    }
+
+    return parsed && typeof parsed === 'object' ? parsed : {};
   } catch {
-    return [];
+    return {};
   }
+}
+
+function getPlacementHint(id: WidgetId, placements: FocusPlacement[]): { col: 0 | 1; order: number } {
+  const placement = placements.find((entry) => entry.id === id);
+  const col: 0 | 1 = placement?.column === 'right' ? 1 : 0;
+
+  const colOrder = placements
+    .filter((entry) => (entry.column === 'right' ? 1 : 0) === col)
+    .findIndex((entry) => entry.id === id);
+
+  return { col, order: colOrder >= 0 ? colOrder : placements.length };
 }
 
 export function useLayoutEngine(state: MockUiState): {
@@ -22,13 +42,32 @@ export function useLayoutEngine(state: MockUiState): {
   pinWidget: (id: WidgetId) => void;
   resetLayout: () => void;
 } {
-  const [pinnedWidgets, setPinnedWidgets] = useState<WidgetId[]>(() => readPinned());
+  const [pinState, setPinState] = useState<FocusPinMap>(() => readPins());
 
-  const plan = useMemo(() => buildLayoutPlan(state, pinnedWidgets), [state, pinnedWidgets]);
+  const plan = useMemo(() => buildLayoutPlan(state, pinState), [state, pinState]);
 
   const pinWidget = (id: WidgetId) => {
-    setPinnedWidgets((previous) => {
-      const next = previous.includes(id) ? previous.filter((entry) => entry !== id) : [id, ...previous];
+    setPinState((previous) => {
+      const hint = getPlacementHint(id, plan.focusPlacements);
+      const current = previous[id];
+      const next: FocusPinMap = {
+        ...previous,
+        [id]: {
+          pinned: !current?.pinned,
+          col: current?.col ?? hint.col,
+          order: current?.order ?? hint.order,
+          anchor: current?.anchor ?? 'normal'
+        }
+      };
+
+      if (current?.pinned === false) {
+        next[id] = { ...next[id], pinned: true, col: hint.col, order: hint.order };
+      }
+
+      if (current?.pinned === true) {
+        next[id] = { ...next[id], pinned: false, col: hint.col, order: hint.order };
+      }
+
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
       return next;
     });
@@ -36,8 +75,12 @@ export function useLayoutEngine(state: MockUiState): {
 
   const resetLayout = () => {
     window.localStorage.removeItem(STORAGE_KEY);
-    setPinnedWidgets([]);
+    setPinState({});
   };
+
+  const pinnedWidgets = Object.entries(pinState)
+    .filter(([, meta]) => Boolean(meta?.pinned))
+    .map(([id]) => id as WidgetId);
 
   return { plan, pinnedWidgets, pinWidget, resetLayout };
 }

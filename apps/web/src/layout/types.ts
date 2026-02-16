@@ -40,6 +40,17 @@ export type FocusPlacement = {
   column: 'left' | 'right';
 };
 
+export type PinnedAnchor = 'top' | 'normal';
+
+export type FocusPinState = {
+  pinned: boolean;
+  col: 0 | 1;
+  order: number;
+  anchor: PinnedAnchor;
+};
+
+export type FocusPinMap = Partial<Record<WidgetId, FocusPinState>>;
+
 export type LayoutPlan = {
   computedAt: number;
   focusPlacements: FocusPlacement[];
