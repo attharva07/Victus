@@ -1,6 +1,6 @@
 import { useState } from 'react';
 
-export default function CommandDock() {
+export default function CommandDock({ onSubmit }: { onSubmit: (value: string) => void }) {
   const [value, setValue] = useState('');
   const [expanded, setExpanded] = useState(false);
 
@@ -14,6 +14,13 @@ export default function CommandDock() {
           value={value}
           onFocus={() => setExpanded(true)}
           onClick={() => setExpanded(true)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' && value.trim()) {
+              onSubmit(value);
+              setValue('');
+              setExpanded(true);
+            }
+          }}
           onChange={(event) => {
             const next = event.target.value;
             setValue(next);
