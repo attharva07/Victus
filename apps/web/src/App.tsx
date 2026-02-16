@@ -8,7 +8,8 @@ import CameraScreen from './views/CameraScreen';
 import FilesScreen from './views/FilesScreen';
 import FinanceScreen from './views/FinanceScreen';
 import MemoriesScreen from './views/MemoriesScreen';
-import defaultLayoutPlan from './layout/presets';
+import buildAdaptiveLayoutPlan from './layout/engine';
+import type { FocusMode, LayoutSignals, Severity } from './layout/signals';
 import { initialVictusState, type VictusState } from './data/victusStore';
 
 type DialogueMessage = {
@@ -63,6 +64,58 @@ function App() {
     [state.items]
   );
 
+
+  const severityForCount = (count: number): Severity => {
+    if (count <= 0) return 'none';
+    if (count >= 3) return 'high';
+    if (count >= 2) return 'medium';
+    return 'low';
+  };
+
+  const derivedSignals = useMemo<LayoutSignals>(() => {
+    const all = Object.values(state.items);
+    const remindersCount = all.filter((item) => item.kind === 'reminder' && item.status === 'active').length;
+    const alertsCount = all.filter((item) => item.kind === 'alert' && item.status === 'active').length;
+    const failuresCount = all.filter((item) => item.kind === 'failure' && item.status !== 'resolved').length;
+    const approvalsPending = all.filter((item) => item.kind === 'approval' && item.approvalState === 'pending').length;
+    const workflowsActive = all.filter((item) => item.kind === 'workflow' && item.workflowState === 'active').length;
+
+    let confidence: LayoutSignals['confidence'] = 'stable';
+    if (alertsCount >= 2) confidence = 'drifting';
+    if (failuresCount >= 2) confidence = 'unstable';
+
+    const alertsSeverity = severityForCount(alertsCount);
+    const failuresSeverity: Severity = failuresCount >= 2 ? 'critical' : severityForCount(failuresCount);
+
+    let focusMode: FocusMode = 'default';
+    if (dialogueOpen) focusMode = 'focus';
+    if (approvalsPending > 0 && dialogueOpen) focusMode = 'review';
+    if (failuresSeverity === 'critical') focusMode = 'recovery';
+
+    return {
+      remindersCount,
+      alertsCount,
+      alertsSeverity,
+      failuresCount,
+      failuresSeverity,
+      approvalsPending,
+      workflowsActive,
+      confidence,
+      dialogueOpen,
+      focusMode,
+      updatedAt: Date.now()
+    };
+  }, [dialogueOpen, state.items]);
+
+  const activeLayoutPlan = useMemo(() => buildAdaptiveLayoutPlan(derivedSignals), [derivedSignals]);
+
+  const gridTemplateColumns =
+    activeLayoutPlan.splitColumns === 'centerFocus'
+      ? '64px minmax(0,1.35fr) 280px'
+      : activeLayoutPlan.splitColumns === 'rightFocus'
+        ? '64px minmax(0,1fr) 360px'
+        : '64px minmax(0,1fr) 320px';
+
   const handleCommandDockIntent = () => {
     if (activeView !== 'overview') {
       setActiveView('overview');
@@ -85,7 +138,7 @@ function App() {
 
   return (
     <div className="h-screen overflow-hidden bg-bg text-slate-200">
-      <div className="grid h-full grid-cols-[64px_minmax(0,1fr)_320px] gap-4 px-3 pb-28 pt-3">
+      <div className="grid h-full gap-4 px-3 pb-28 pt-3" style={{ gridTemplateColumns }}>
         <LeftRail activeView={activeView} onChangeView={(view) => setActiveView(view)} />
 
         <main className="h-full overflow-hidden">
@@ -93,7 +146,14 @@ function App() {
         </main>
 
         <section className="h-full overflow-hidden">
-          <RightStack cards={state.contextCards} items={state.items} selectedId={selectedId ?? undefined} onSelect={setSelectedId} />
+          <RightStack
+            cards={state.contextCards}
+            items={state.items}
+            selectedId={selectedId ?? undefined}
+            onSelect={setSelectedId}
+            placements={activeLayoutPlan.placements}
+            activeCardId={activeLayoutPlan.activeCardId}
+          />
         </section>
       </div>
 
@@ -101,7 +161,7 @@ function App() {
       <BottomStrip />
 
       <div className="sr-only" aria-live="polite">
-        Active preset: {defaultLayoutPlan.preset}
+        Active preset: {activeLayoutPlan.preset}
       </div>
     </div>
   );
@@ -117,6 +177,8 @@ function App() {
           dialogueOpen={dialogueOpen}
           selectedId={selectedId ?? undefined}
           onSelect={setSelectedId}
+          placements={activeLayoutPlan.placements}
+          activeCardId={activeLayoutPlan.activeCardId}
         />
       );
     }

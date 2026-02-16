@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import type { CardSize } from '../layout/types';
+import type { CardPlacement, CardSize } from '../layout/types';
 import SystemOverviewCard from './SystemOverviewCard';
 import type { VictusItem } from '../data/victusStore';
 import { worldTldrEntries } from '../data/victusStore';
@@ -72,7 +72,9 @@ export default function CardStack({
   dialogueMessages,
   dialogueOpen,
   selectedId,
-  onSelect
+  onSelect,
+  placements,
+  activeCardId
 }: {
   today: VictusItem[];
   upcoming: VictusItem[];
@@ -87,6 +89,8 @@ export default function CardStack({
   dialogueOpen: boolean;
   selectedId?: string;
   onSelect: (id: string) => void;
+  placements: CardPlacement[];
+  activeCardId?: string;
 }) {
   const [activeIndex, setActiveIndex] = useState(0);
   const [focusedCardId, setFocusedCardId] = useState<string | null>(null);
@@ -108,12 +112,17 @@ export default function CardStack({
     }
   }, [dialogueOpen]);
 
-  const cards = useMemo<StackCard[]>(
-    () => [
-      {
+  useEffect(() => {
+    if (activeCardId && placements.some((placement) => placement.zone === 'center' && placement.id === activeCardId)) {
+      setFocusedCardId(activeCardId);
+    }
+  }, [activeCardId, placements]);
+
+  const cards = useMemo<StackCard[]>(() => {
+    const byId: Record<string, Omit<StackCard, 'size'>> = {
+      system_overview: {
         id: 'system_overview',
         title: 'System Overview',
-        size: 'L',
         render: (focusMode) => (
           <SystemOverviewCard
             outcomes={outcomes}
@@ -123,10 +132,9 @@ export default function CardStack({
           />
         )
       },
-      {
+      dialogue: {
         id: 'dialogue',
         title: 'Dialogue',
-        size: 'S',
         render: (focusMode) => {
           const visible = focusMode ? dialogueMessages : dialogueMessages.slice(-2);
           return (
@@ -144,21 +152,27 @@ export default function CardStack({
           );
         }
       },
-      {
+      timeline: {
         id: 'timeline',
         title: 'Timeline',
-        size: 'M',
         render: () => <TimelinePreview today={today} upcoming={upcoming} />
       },
-      {
+      world_tldr: {
         id: 'world_tldr',
         title: 'World TLDR',
-        size: 'S',
         render: (focusMode) => <WorldTldrPreview focusMode={focusMode} />
       }
-    ],
-    [dialogueMessages, onSelect, outcomes, selectedId, today, upcoming]
-  );
+    };
+
+    return placements
+      .filter((placement) => placement.zone === 'center')
+      .sort((a, b) => a.priority - b.priority)
+      .map((placement) => ({
+        ...byId[placement.id],
+        size: placement.size
+      }))
+      .filter((card): card is StackCard => Boolean(card.id));
+  }, [dialogueMessages, onSelect, outcomes, placements, selectedId, today, upcoming]);
 
   const shiftActive = (delta: number) => {
     setActiveIndex((current) => {
