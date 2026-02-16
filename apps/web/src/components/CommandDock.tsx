@@ -1,6 +1,6 @@
 import { useState } from 'react';
 
-export default function CommandDock({ onSubmit }: { onSubmit: (value: string) => void }) {
+export default function CommandDock({ onSubmit, onInteract }: { onSubmit: (value: string) => void; onInteract: () => void }) {
   const [value, setValue] = useState('');
   const [expanded, setExpanded] = useState(false);
 
@@ -12,13 +12,20 @@ export default function CommandDock({ onSubmit }: { onSubmit: (value: string) =>
         <input
           aria-label="Command dock"
           value={value}
-          onFocus={() => setExpanded(true)}
-          onClick={() => setExpanded(true)}
+          onFocus={() => {
+            setExpanded(true);
+            onInteract();
+          }}
+          onClick={() => {
+            setExpanded(true);
+            onInteract();
+          }}
           onKeyDown={(event) => {
             if (event.key === 'Enter' && value.trim()) {
               onSubmit(value);
               setValue('');
               setExpanded(true);
+              onInteract();
             }
           }}
           onChange={(event) => {
@@ -26,6 +33,7 @@ export default function CommandDock({ onSubmit }: { onSubmit: (value: string) =>
             setValue(next);
             if (next.length > 0) {
               setExpanded(true);
+              onInteract();
             }
           }}
           placeholder="Issue a command…"

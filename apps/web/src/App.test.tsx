@@ -1,23 +1,57 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import App from './App';
 
-describe('Phase 4A.2 behavior', () => {
-  it('right stack focus mode enables internal scroll container and shows collapse controls', () => {
+describe('Phase 4A.3 behavior', () => {
+  it('clicking center cards toggles focus state', () => {
     render(<App />);
 
-    const remindersLabel = screen.getByRole('button', { name: 'Reminders' });
-    const remindersCard = remindersLabel.closest('section');
-    expect(remindersCard).toBeTruthy();
+    const timelineCard = screen.getByTestId('stack-card-timeline');
+    expect(timelineCard).toHaveAttribute('data-focused', 'false');
 
-    const expandButton = within(remindersCard as HTMLElement).getByRole('button', { name: 'Expand' });
-    fireEvent.click(expandButton);
+    fireEvent.click(timelineCard);
+    expect(timelineCard).toHaveAttribute('data-focused', 'true');
 
-    expect(screen.getByRole('button', { name: /collapse/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /back/i })).toBeInTheDocument();
+    fireEvent.click(timelineCard);
+    expect(timelineCard).toHaveAttribute('data-focused', 'false');
+  });
 
-    const focusedBody = screen.getByTestId('focused-rightstack-body');
+  it('clicking right stack cards focuses and enables internal scroll body', () => {
+    render(<App />);
+
+    const remindersCard = screen.getByTestId('right-stack-card-reminders');
+    expect(remindersCard).toHaveAttribute('data-focused', 'false');
+
+    fireEvent.click(remindersCard);
+    expect(remindersCard).toHaveAttribute('data-focused', 'true');
+
+    const focusedBody = within(remindersCard).getByTestId('focused-rightstack-body');
     expect(focusedBody.className).toContain('overflow-y-auto');
     expect(focusedBody.className).toContain('thin-scroll');
+  });
+
+  it('command dock opens dialogue card and appends messages on enter', () => {
+    render(<App />);
+
+    const commandDock = screen.getByLabelText('Command dock');
+    fireEvent.click(commandDock);
+
+    const dialogueCard = screen.getByTestId('stack-card-dialogue');
+    expect(dialogueCard).toHaveAttribute('data-focused', 'true');
+
+    fireEvent.change(commandDock, { target: { value: 'Plan tomorrow' } });
+    fireEvent.keyDown(commandDock, { key: 'Enter' });
+
+    const dialogueThread = within(dialogueCard).getByTestId('dialogue-thread');
+    expect(within(dialogueThread).getByText('Plan tomorrow')).toBeInTheDocument();
+    expect(within(dialogueThread).getByText(/Acknowledged\. Captured "Plan tomorrow"/i)).toBeInTheDocument();
+  });
+
+  it('system overview does not render command log style entries', () => {
+    render(<App />);
+
+    expect(screen.queryByText(/Command:/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Submitted from Command Dock/i)).not.toBeInTheDocument();
+    expect(screen.getByText('REMINDERS CREATED / UPDATED')).toBeInTheDocument();
   });
 
   it('left rail navigation switches to memories view and renders search input', () => {

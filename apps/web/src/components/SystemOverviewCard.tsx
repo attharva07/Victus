@@ -48,27 +48,31 @@ function Section({ title, events, selectedId, onSelect, limit }: { title: string
 }
 
 export default function SystemOverviewCard({
-  today,
-  upcoming,
-  completed,
+  outcomes,
   selectedId,
   onSelect,
   focusMode = false
 }: {
-  today: VictusItem[];
-  upcoming: VictusItem[];
-  completed: VictusItem[];
+  outcomes: {
+    reminders: VictusItem[];
+    approvals: VictusItem[];
+    workflows: VictusItem[];
+    failures: VictusItem[];
+    alerts: VictusItem[];
+  };
   selectedId?: string;
   onSelect: (id: string) => void;
   focusMode?: boolean;
 }) {
-  const limits = focusMode ? { today: 8, upcoming: 6, completed: 6 } : { today: 4, upcoming: 3, completed: 3 };
+  const limits = focusMode ? 6 : 3;
 
   return (
     <div className={`space-y-3 ${focusMode ? 'thin-scroll max-h-[60vh] overflow-y-auto pr-1' : ''}`}>
-      <Section title="TODAY" events={today} selectedId={selectedId} onSelect={onSelect} limit={limits.today} />
-      <Section title="UPCOMING" events={upcoming} selectedId={selectedId} onSelect={onSelect} limit={limits.upcoming} />
-      <Section title="COMPLETED" events={completed} selectedId={selectedId} onSelect={onSelect} limit={limits.completed} />
+      <Section title="REMINDERS CREATED / UPDATED" events={outcomes.reminders} selectedId={selectedId} onSelect={onSelect} limit={limits} />
+      <Section title="APPROVALS PENDING / RESOLVED" events={outcomes.approvals} selectedId={selectedId} onSelect={onSelect} limit={limits} />
+      <Section title="WORKFLOWS STARTED / COMPLETED" events={outcomes.workflows} selectedId={selectedId} onSelect={onSelect} limit={limits} />
+      <Section title="FAILURES DETECTED / RESOLVED" events={outcomes.failures} selectedId={selectedId} onSelect={onSelect} limit={limits} />
+      <Section title="ALERTS ACKNOWLEDGED / MUTED" events={outcomes.alerts} selectedId={selectedId} onSelect={onSelect} limit={limits} />
     </div>
   );
 }
