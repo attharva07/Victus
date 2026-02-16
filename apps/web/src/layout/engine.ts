@@ -1,150 +1,142 @@
-import type { LayoutSignals, Severity } from './signals';
-import type { CardState, LayoutPlan, LayoutPreset, VictusCardId } from './types';
+import { contextWidgetIds, focusWidgetIds, widgetRegistry } from './registry';
+import type {
+  FocusPlacement,
+  LayoutEngineConfig,
+  LayoutPlan,
+  ScoredWidget,
+  WidgetId,
+  WidgetRuntimeSignals,
+  WidgetSize
+} from './types';
 
-type ScoredCard = {
-  id: VictusCardId;
-  urgencyScore: number;
-  finalScore: number;
+const spanMap: Record<WidgetSize, number> = {
+  XS: 3,
+  S: 4,
+  M: 6,
+  L: 8,
+  XL: 12
 };
 
-const centerLaneCards: VictusCardId[] = ['systemOverview', 'dialogue', 'failures', 'timeline', 'worldTldr'];
-const rightContextCards: VictusCardId[] = ['failures', 'approvals', 'alerts', 'reminders', 'workflows'];
-const scoreTieBreak: VictusCardId[] = [
-  'failures',
+const tieBreakOrder: WidgetId[] = [
   'dialogue',
-  'approvals',
-  'alerts',
-  'reminders',
-  'workflows',
   'systemOverview',
   'timeline',
-  'worldTldr'
+  'healthPulse',
+  'approvals',
+  'failures',
+  'alerts',
+  'reminders',
+  'workflows'
 ];
 
-const severityWeight: Record<Severity, number> = {
-  none: 0,
-  low: 8,
-  medium: 16,
-  high: 24,
-  critical: 35
+export const defaultEngineConfig: LayoutEngineConfig = {
+  urgencyWeight: 0.65,
+  confidenceWeight: 0.35,
+  pinnedBoost: 20,
+  highUrgencyThreshold: 82,
+  recomputeIntervalMs: 5 * 60 * 1000,
+  debug: false
 };
 
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value));
+function clamp(value: number): number {
+  return Math.max(0, Math.min(100, value));
 }
 
-function urgencyForCard(id: VictusCardId, signals: LayoutSignals): number {
-  switch (id) {
-    case 'systemOverview':
-      return clamp(40 + signals.workflowsActive * 4 + signals.approvalsPending * 3, 25, 90);
-    case 'dialogue':
-      return clamp((signals.dialogueOpen ? 65 : 25) + (signals.userTyping ? 20 : 0), 10, 100);
-    case 'failures':
-      return clamp(45 + severityWeight[signals.failuresSeverity] + signals.failuresCount * 8, 10, 100);
-    case 'reminders':
-      return clamp(30 + signals.remindersCount * 6 + signals.remindersDueToday * 10, 0, 100);
-    case 'approvals':
-      return clamp(35 + signals.approvalsPending * 12, 0, 100);
-    case 'alerts':
-      return clamp(30 + severityWeight[signals.alertsSeverity] + signals.alertsCount * 7, 0, 100);
-    case 'workflows':
-      return clamp(26 + signals.workflowsActive * 9, 0, 100);
-    case 'timeline':
-      return clamp(28 + signals.remindersDueToday * 5 + (signals.dialogueOpen ? 8 : 0), 0, 90);
-    case 'worldTldr':
-      return 20;
-  }
+function chooseSize(score: number, allowed: WidgetSize[]): WidgetSize {
+  if (score >= 88 && allowed.includes('XL')) return 'XL';
+  if (score >= 76 && allowed.includes('L')) return 'L';
+  if (score >= 58 && allowed.includes('M')) return 'M';
+  if (score >= 32 && allowed.includes('S')) return 'S';
+  return allowed.includes('XS') ? 'XS' : allowed[0];
 }
 
-function sortScoredCards(cards: ScoredCard[]): ScoredCard[] {
-  return [...cards].sort((a, b) => {
-    if (a.finalScore !== b.finalScore) return b.finalScore - a.finalScore;
-    return scoreTieBreak.indexOf(a.id) - scoreTieBreak.indexOf(b.id);
-  });
-}
+function scoreWidgets(signals: WidgetRuntimeSignals, config: LayoutEngineConfig): ScoredWidget[] {
+  return Object.values(widgetRegistry).map((widget) => {
+    const runtime = signals[widget.id] ?? {};
+    const urgency = clamp(runtime.urgency ?? widget.urgency);
+    const confidence = clamp(runtime.confidence ?? widget.confidence);
+    const pinned = runtime.pinned ?? widget.pinned ?? false;
+    const failureBoost = runtime.failureBoost ?? widget.failureBoost ?? 0;
+    const approvalBoost = runtime.approvalBoost ?? widget.approvalBoost ?? 0;
+    const score = urgency * config.urgencyWeight + confidence * config.confidenceWeight + (pinned ? config.pinnedBoost : 0) + failureBoost + approvalBoost;
 
-function getPreset(signals: LayoutSignals, dominantCardId: VictusCardId): LayoutPreset {
-  if (dominantCardId === 'dialogue') return 'DIALOGUE';
-  if (dominantCardId === 'failures') return 'STABILIZE';
-
-  const load = signals.approvalsPending + signals.remindersDueToday + signals.workflowsActive + signals.alertsCount;
-  return load >= 8 ? 'ACTIVE' : 'CALM';
-}
-
-export function generateLayoutPlan(signals: LayoutSignals): LayoutPlan {
-  const confidenceFactor = 0.6 + 0.4 * (signals.confidenceScore / 100);
-
-  const scored = sortScoredCards(
-    scoreTieBreak.map((id) => {
-      const urgencyScore = urgencyForCard(id, signals);
-      return {
-        id,
-        urgencyScore,
-        finalScore: urgencyScore * confidenceFactor
-      };
-    })
-  );
-
-  let dominantCardId: VictusCardId = scored[0]?.id ?? 'systemOverview';
-
-  if (signals.failuresSeverity === 'critical' || signals.confidenceScore < 25) {
-    dominantCardId = 'failures';
-  } else if (signals.dialogueOpen && signals.confidenceScore >= 25) {
-    dominantCardId = 'dialogue';
-  }
-
-  const rankedCenter = sortScoredCards(scored.filter((card) => centerLaneCards.includes(card.id)));
-  const centerWithoutDominant = rankedCenter.filter((card) => card.id !== dominantCardId);
-
-  const supportingCardIds: VictusCardId[] = [];
-  const compactCardIds: VictusCardId[] = [];
-
-  if (centerWithoutDominant.length > 0) {
-    for (const card of centerWithoutDominant) {
-      if (supportingCardIds.length < 4 && card.finalScore >= 30) {
-        supportingCardIds.push(card.id);
-      } else {
-        compactCardIds.push(card.id);
+    return {
+      ...widget,
+      size: chooseSize(score, widget.allowedSizes),
+      score,
+      scoreBreakdown: {
+        urgency: urgency * config.urgencyWeight,
+        confidence: confidence * config.confidenceWeight,
+        pinnedBoost: pinned ? config.pinnedBoost : 0,
+        failureBoost,
+        approvalBoost
       }
+    };
+  });
+}
+
+function deterministicSort(items: ScoredWidget[]): ScoredWidget[] {
+  return [...items].sort((a, b) => {
+    if (a.score !== b.score) return b.score - a.score;
+    return tieBreakOrder.indexOf(a.id) - tieBreakOrder.indexOf(b.id);
+  });
+}
+
+function packFocus(sortedFocus: ScoredWidget[]): FocusPlacement[] {
+  const placements: FocusPlacement[] = [];
+  let row = 1;
+  let usedCols = 0;
+
+  sortedFocus.forEach((widget) => {
+    const span = spanMap[widget.size];
+    if (usedCols + span > 12) {
+      row += 1;
+      usedCols = 0;
     }
-  }
 
-  if (!supportingCardIds.includes('systemOverview') && dominantCardId !== 'systemOverview') {
-    supportingCardIds.unshift('systemOverview');
-    const dedup = Array.from(new Set(supportingCardIds));
-    supportingCardIds.splice(0, supportingCardIds.length, ...dedup.slice(0, 4));
-    const compactSet = new Set(compactCardIds);
-    compactSet.delete('systemOverview');
-    compactCardIds.splice(0, compactCardIds.length, ...compactSet);
-  }
+    placements.push({
+      id: widget.id,
+      row,
+      colStart: usedCols + 1,
+      span,
+      size: widget.size
+    });
 
-  const rightContextCardIds = sortScoredCards(scored.filter((card) => rightContextCards.includes(card.id))).map((card) => card.id);
-
-  if (dominantCardId === 'failures') {
-    const remaining = rightContextCardIds.filter((id) => id !== 'failures');
-    rightContextCardIds.splice(0, rightContextCardIds.length, 'failures', ...remaining);
-  }
-
-  const cardStates: Partial<Record<VictusCardId, CardState>> = {
-    [dominantCardId]: 'focus'
-  };
-
-  supportingCardIds.forEach((id) => {
-    cardStates[id] = 'peek';
+    usedCols += span;
+    if (usedCols === 12) {
+      row += 1;
+      usedCols = 0;
+    }
   });
 
-  compactCardIds.forEach((id) => {
-    cardStates[id] = 'chip';
-  });
+  return placements;
+}
+
+export function buildLayoutPlan(signals: WidgetRuntimeSignals, config: LayoutEngineConfig = defaultEngineConfig): LayoutPlan {
+  const scored = deterministicSort(scoreWidgets(signals, config));
+  const focus = scored.filter((entry) => focusWidgetIds.includes(entry.id));
+  const context = scored.filter((entry) => contextWidgetIds.includes(entry.id));
+
+  if (config.debug) {
+    // eslint-disable-next-line no-console
+    console.debug('[layout-engine:scores]', scored.map((w) => ({ id: w.id, score: Number(w.score.toFixed(2)), ...w.scoreBreakdown })));
+  }
 
   return {
-    dominantCardId,
-    supportingCardIds,
-    compactCardIds,
-    cardStates,
-    rightContextCardIds,
-    preset: getPreset(signals, dominantCardId),
-    generatedAt: Date.now(),
-    ttlSeconds: 180
+    computedAt: Date.now(),
+    focusPlacements: packFocus(focus),
+    contextOrder: context.map((entry) => entry.id),
+    scores: scored.reduce<LayoutPlan['scores']>((acc, widget) => {
+      acc[widget.id] = { ...widget.scoreBreakdown, total: widget.score };
+      return acc;
+    }, {})
   };
+}
+
+export function needsUrgentRecompute(signals: WidgetRuntimeSignals, config: LayoutEngineConfig = defaultEngineConfig): boolean {
+  const approvalsUrgency = signals.approvals?.urgency ?? 0;
+  const failureUrgency = signals.failures?.urgency ?? 0;
+  const maxUrgency = Math.max(...Object.values(signals).map((signal) => signal?.urgency ?? 0), 0);
+
+  return approvalsUrgency >= config.highUrgencyThreshold || failureUrgency >= config.highUrgencyThreshold || maxUrgency >= config.highUrgencyThreshold;
 }
