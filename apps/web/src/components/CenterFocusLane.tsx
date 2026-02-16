@@ -158,26 +158,29 @@ export default function CenterFocusLane({
   dialogueMessages: DialogueMessage[];
   onToggleCard: (cardId: VictusCardId) => void;
 }) {
-  const compactIds = plan.compactCardIds;
-  const visibleSupporting = useMemo(() => plan.supportingCardIds.slice(0, 4), [plan.supportingCardIds]);
+  const dominantCardId = plan.dominantCardId ?? 'dialogue';
+  const cardStates = plan.cardStates ?? {};
+  const compactIds = plan.compactCardIds ?? [];
+  const supportingCardIds = plan.supportingCardIds ?? [];
+  const visibleSupporting = useMemo(() => supportingCardIds.slice(0, 4), [supportingCardIds]);
 
   return (
     <section className="h-full overflow-hidden rounded-2xl border border-borderSoft/60 bg-panel/45 p-3" aria-label="Center focus lane">
       <div data-testid="center-focus-lane" className="thin-scroll flex h-full flex-col gap-3 overflow-y-auto pr-1 pb-40">
-        <LaneCard id={plan.dominantCardId} state={plan.cardStates[plan.dominantCardId] ?? 'focus'} onToggle={() => onToggleCard(plan.dominantCardId)}>
-          {renderBody(plan.dominantCardId, 'focus')}
+        <LaneCard id={dominantCardId} state={cardStates[dominantCardId] ?? 'focus'} onToggle={() => onToggleCard(dominantCardId)}>
+          {renderBody(dominantCardId, 'focus')}
         </LaneCard>
 
-        {plan.dominantCardId === 'dialogue' && healthPulseAsStrip(signals) && (
+        {dominantCardId === 'dialogue' && healthPulseAsStrip(signals) && (
           <div data-testid="health-pulse-strip" className="rounded-lg border border-rose-900/50 bg-rose-950/20 px-3 py-2 text-xs text-rose-100">
             Health Pulse: {outcomes.failures.length} open failures · confidence {signals.confidenceScore}
           </div>
         )}
 
         {visibleSupporting
-          .filter((cardId) => !(cardId === 'failures' && plan.dominantCardId === 'dialogue' && healthPulseAsStrip(signals)))
+          .filter((cardId) => !(cardId === 'failures' && dominantCardId === 'dialogue' && healthPulseAsStrip(signals)))
           .map((cardId) => (
-            <LaneCard key={cardId} id={cardId} state={plan.cardStates[cardId] ?? 'peek'} onToggle={() => onToggleCard(cardId)}>
+            <LaneCard key={cardId} id={cardId} state={cardStates[cardId] ?? 'peek'} onToggle={() => onToggleCard(cardId)}>
               {renderBody(cardId, 'peek')}
             </LaneCard>
           ))}

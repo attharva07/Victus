@@ -57,7 +57,7 @@ export default function CommandDock({
   }, []);
 
   return (
-    <div data-testid="command-dock-shell" className="pointer-events-none fixed inset-x-0 z-40 px-4 bottom-[56px]">
+    <div data-testid="command-dock-shell" className="pointer-events-none fixed inset-x-0 z-40 px-4 bottom-[72px]">
       <div
         data-testid="command-dock-pill"
         data-expanded={expanded ? 'true' : 'false'}
