@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import base64
 import secrets
+from pathlib import Path
 
 import bcrypt
 from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request, status
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from adapters.llm.provider import LLMProvider
@@ -86,6 +89,7 @@ def create_app() -> FastAPI:
     app = FastAPI(title="Victus Local")
     llm_provider = LLMProvider()
     camera_service = CameraService()
+    dist_dir = Path(__file__).resolve().parents[2] / "apps" / "web" / "dist"
 
     @app.get("/health")
     def health() -> dict[str, str]:
@@ -270,6 +274,14 @@ def create_app() -> FastAPI:
             capture_id=payload.capture_id,
             image_b64=payload.image_b64,
         )
+
+    if dist_dir.exists():
+
+        @app.get("/", include_in_schema=False)
+        def web_root() -> FileResponse:
+            return FileResponse(dist_dir / "index.html")
+
+        app.mount("/", StaticFiles(directory=dist_dir, html=True), name="web")
 
     return app
 
