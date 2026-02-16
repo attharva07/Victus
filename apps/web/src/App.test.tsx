@@ -1,32 +1,52 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import App from './App';
 
-describe('Phase 4A UI', () => {
-  it('renders system overview section headings', () => {
+describe('Phase 4A.1 interactive UI', () => {
+  it('opens detail drawer when clicking timeline item', () => {
     render(<App />);
 
-    expect(screen.getByText('System Overview')).toBeInTheDocument();
-    expect(screen.getByText('TODAY')).toBeInTheDocument();
-    expect(screen.getByText('UPCOMING')).toBeInTheDocument();
-    expect(screen.getByText('COMPLETED')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Review deployment checklist/i }));
+
+    expect(screen.getByText('Item Details')).toBeInTheDocument();
+    expect(screen.getAllByText('Review deployment checklist').length).toBeGreaterThan(1);
   });
 
-  it('renders all context stack cards', () => {
+  it('close button returns to context stack', () => {
     render(<App />);
 
-    ['Reminders', 'Alerts', 'Pending Approvals', 'Active Workflows', 'Unresolved Failures'].forEach((card) => {
-      expect(screen.getByText(card)).toBeInTheDocument();
-    });
+    fireEvent.click(screen.getByRole('button', { name: /Review deployment checklist/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Close details/i }));
+
+    expect(screen.getByText('Reminders')).toBeInTheDocument();
   });
 
-  it('expands command dock on click', () => {
+  it('mark done moves an item to completed', () => {
+    render(<App />);
+
+    fireEvent.click(screen.getByRole('button', { name: /Review deployment checklist/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Mark Done' }));
+
+    const completedSection = screen.getByText('COMPLETED').closest('section');
+    expect(completedSection).not.toBeNull();
+    expect(within(completedSection as HTMLElement).getByText('Review deployment checklist')).toBeInTheDocument();
+  });
+
+  it('submitting command dock creates a new today item', () => {
     render(<App />);
 
     const input = screen.getByLabelText('Command dock');
-    const wrapper = input.parentElement;
-    expect(wrapper).toHaveClass('w-72');
+    fireEvent.change(input, { target: { value: 'run digest' } });
+    fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' });
 
-    fireEvent.click(input);
-    expect(wrapper).toHaveClass('max-w-xl');
+    expect(screen.getByText('Command: run digest')).toBeInTheDocument();
+  });
+
+  it('left rail switches to placeholder views', () => {
+    render(<App />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Finance' }));
+
+    expect(screen.getByText('Finance')).toBeInTheDocument();
+    expect(screen.getByText(/Coming soon/i)).toBeInTheDocument();
   });
 });
