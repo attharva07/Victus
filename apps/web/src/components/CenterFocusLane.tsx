@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import type { VictusItem } from '../data/victusStore';
-import type { LayoutPlan, VictusCardId } from '../layout/types';
+import type { CardState, LayoutPlan, VictusCardId } from '../layout/types';
 import { worldTldrEntries } from '../data/victusStore';
+import type { LayoutSignals } from '../layout/signals';
 
 type DialogueMessage = {
   id: string;
@@ -29,121 +30,124 @@ function titleFor(id: VictusCardId): string {
   return 'Workflows';
 }
 
+function healthPulseAsStrip(signals: LayoutSignals): boolean {
+  return signals.failuresSeverity !== 'high' && signals.failuresSeverity !== 'critical' && signals.confidenceScore >= 40;
+}
+
+function cardShellClass(state: CardState, id: VictusCardId): string {
+  if (state === 'focus') {
+    return id === 'dialogue'
+      ? 'max-h-[55vh] min-h-[42vh]'
+      : 'max-h-[48vh] min-h-[28vh]';
+  }
+
+  if (state === 'peek') {
+    return 'max-h-44 min-h-28';
+  }
+
+  return 'min-h-0';
+}
+
 function LaneCard({
   id,
-  dominant,
-  expanded,
+  state,
   onToggle,
   children
 }: {
   id: VictusCardId;
-  dominant?: boolean;
-  expanded: boolean;
+  state: CardState;
   onToggle: () => void;
   children: ReactNode;
 }) {
-  const contentRef = useRef<HTMLDivElement>(null);
-  const [overflows, setOverflows] = useState(false);
-
-  useEffect(() => {
-    const el = contentRef.current;
-    if (!el) return;
-    const evaluate = () => setOverflows(el.scrollHeight > el.clientHeight + 6);
-    evaluate();
-    window.addEventListener('resize', evaluate);
-    return () => window.removeEventListener('resize', evaluate);
-  }, [children, expanded]);
-
-  const minHeight = dominant ? (expanded ? 'min-h-[48vh]' : 'min-h-[38vh]') : expanded ? 'min-h-56' : 'min-h-36';
-
   return (
     <article
       data-testid={`center-card-${id}`}
-      className={`w-full rounded-xl border border-borderSoft/70 bg-panel px-4 py-3 transition ${minHeight} ${dominant ? 'ring-1 ring-cyan-500/30' : ''}`}
+      data-card-state={state}
+      className={`w-full rounded-xl border border-borderSoft/70 bg-panel px-4 py-3 transition ${cardShellClass(state, id)} ${state === 'focus' ? 'ring-1 ring-cyan-500/30' : ''}`}
       onClick={onToggle}
     >
       <header className="flex items-center justify-between gap-3">
         <h2 className="text-sm font-semibold text-slate-100">{titleFor(id)}</h2>
-        {overflows && (
-          <button
-            className="text-xs text-slate-400 hover:text-slate-200"
-            onClick={(event) => {
-              event.stopPropagation();
-              onToggle();
-            }}
-          >
-            {expanded ? 'Collapse' : 'Expand'}
-          </button>
-        )}
+        <span className="text-[10px] uppercase tracking-[0.15em] text-slate-500">{state}</span>
       </header>
-      <div ref={contentRef} className={`mt-3 ${expanded ? 'max-h-[65vh] overflow-y-auto thin-scroll pr-1' : 'max-h-40 overflow-hidden'}`}>
+      <div
+        data-testid={`center-card-content-${id}`}
+        className={`mt-3 ${state === 'focus' ? 'thin-scroll overflow-y-auto pr-1' : 'overflow-hidden'}`}
+      >
         {children}
       </div>
     </article>
   );
 }
 
+function ChipRow({ ids, outcomes }: { ids: VictusCardId[]; outcomes: OutcomeBuckets }) {
+  const counts: Partial<Record<VictusCardId, number>> = {
+    failures: outcomes.failures.length,
+    reminders: outcomes.reminders.length,
+    approvals: outcomes.approvals.filter((item) => item.approvalState === 'pending').length,
+    workflows: outcomes.workflows.length,
+    alerts: outcomes.alerts.length
+  };
+
+  return (
+    <div data-testid="chip-row" className="space-y-2 rounded-xl border border-borderSoft/70 bg-panel px-3 py-2">
+      {ids.map((id) => (
+        <div key={id} data-testid={`chip-row-item-${id}`} className="flex items-center justify-between rounded-md border border-borderSoft/70 bg-panelSoft/40 px-2 py-1 text-xs text-slate-300">
+          <span>{titleFor(id)}</span>
+          <span className="text-[10px] uppercase tracking-wide text-slate-500">active · {counts[id] ?? 0}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function CenterFocusLane({
   plan,
+  signals,
   today,
   upcoming,
   outcomes,
   dialogueMessages,
-  expandedCardIds,
   onToggleCard
 }: {
   plan: LayoutPlan;
+  signals: LayoutSignals;
   today: VictusItem[];
   upcoming: VictusItem[];
   outcomes: OutcomeBuckets;
   dialogueMessages: DialogueMessage[];
-  expandedCardIds: Set<string>;
   onToggleCard: (cardId: string) => void;
 }) {
   const compactIds = plan.compactCardIds;
-
   const visibleSupporting = useMemo(() => plan.supportingCardIds.slice(0, 4), [plan.supportingCardIds]);
 
   return (
     <section className="h-full overflow-hidden rounded-2xl border border-borderSoft/60 bg-panel/45 p-3" aria-label="Center focus lane">
       <div data-testid="center-focus-lane" className="thin-scroll flex h-full flex-col gap-3 overflow-y-auto pr-1 pb-40">
-        <LaneCard
-          id={plan.dominantCardId}
-          dominant
-          expanded={expandedCardIds.has(plan.dominantCardId)}
-          onToggle={() => onToggleCard(plan.dominantCardId)}
-        >
-          {renderBody(plan.dominantCardId)}
+        <LaneCard id={plan.dominantCardId} state={plan.cardStates[plan.dominantCardId] ?? 'focus'} onToggle={() => onToggleCard(plan.dominantCardId)}>
+          {renderBody(plan.dominantCardId, 'focus')}
         </LaneCard>
 
-        {visibleSupporting.map((cardId) => (
-          <LaneCard key={cardId} id={cardId} expanded={expandedCardIds.has(cardId)} onToggle={() => onToggleCard(cardId)}>
-            {renderBody(cardId)}
-          </LaneCard>
-        ))}
-
-        {compactIds.length > 0 && (
-          <div className="rounded-xl border border-borderSoft/70 bg-panel px-3 py-2">
-            <p className="text-[10px] uppercase tracking-[0.15em] text-slate-500">Compact</p>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {compactIds.map((id) => (
-                <button
-                  key={id}
-                  data-testid={`compact-chip-${id}`}
-                  className="rounded-full border border-borderSoft/70 bg-panelSoft/40 px-3 py-1 text-xs text-slate-300 hover:border-cyan-500/50"
-                  onClick={() => onToggleCard(id)}
-                >
-                  {titleFor(id)}
-                </button>
-              ))}
-            </div>
+        {plan.dominantCardId === 'dialogue' && healthPulseAsStrip(signals) && (
+          <div data-testid="health-pulse-strip" className="rounded-lg border border-rose-900/50 bg-rose-950/20 px-3 py-2 text-xs text-rose-100">
+            Health Pulse: {outcomes.failures.length} open failures · confidence {signals.confidenceScore}
           </div>
         )}
+
+        {visibleSupporting
+          .filter((cardId) => !(cardId === 'failures' && plan.dominantCardId === 'dialogue' && healthPulseAsStrip(signals)))
+          .map((cardId) => (
+            <LaneCard key={cardId} id={cardId} state={plan.cardStates[cardId] ?? 'peek'} onToggle={() => onToggleCard(cardId)}>
+              {renderBody(cardId, 'peek')}
+            </LaneCard>
+          ))}
+
+        {compactIds.length > 0 && <ChipRow ids={compactIds} outcomes={outcomes} />}
       </div>
     </section>
   );
 
-  function renderBody(cardId: VictusCardId): ReactNode {
+  function renderBody(cardId: VictusCardId, state: CardState): ReactNode {
     if (cardId === 'systemOverview') {
       return (
         <ul className="space-y-1 text-xs text-slate-300">
@@ -156,7 +160,7 @@ export default function CenterFocusLane({
     }
 
     if (cardId === 'dialogue') {
-      const visible = expandedCardIds.has(cardId) ? dialogueMessages : dialogueMessages.slice(-2);
+      const visible = state === 'peek' ? dialogueMessages.slice(-2) : dialogueMessages;
       return (
         <ul className="space-y-2 text-xs">
           {visible.map((message) => (
@@ -173,14 +177,16 @@ export default function CenterFocusLane({
     }
 
     if (cardId === 'timeline') {
+      const todayItems = state === 'peek' ? today.slice(0, 2) : today.slice(0, 4);
+      const upcomingItems = state === 'peek' ? upcoming.slice(0, 1) : upcoming.slice(0, 3);
       return (
         <div className="space-y-2 text-xs text-slate-300">
           <p className="text-[10px] uppercase tracking-[0.15em] text-slate-500">Today</p>
-          {today.slice(0, 4).map((event) => (
+          {todayItems.map((event) => (
             <p key={event.id}>{event.timeLabel} · {event.title}</p>
           ))}
           <p className="pt-2 text-[10px] uppercase tracking-[0.15em] text-slate-500">Upcoming</p>
-          {upcoming.slice(0, 3).map((event) => (
+          {upcomingItems.map((event) => (
             <p key={event.id}>{event.timeLabel} · {event.title}</p>
           ))}
         </div>
@@ -188,7 +194,7 @@ export default function CenterFocusLane({
     }
 
     if (cardId === 'worldTldr') {
-      const entries = expandedCardIds.has(cardId) ? worldTldrEntries : worldTldrEntries.slice(0, 2);
+      const entries = state === 'peek' ? worldTldrEntries.slice(0, 2) : worldTldrEntries;
       return (
         <div className="space-y-2 text-xs text-slate-300">
           {entries.map((entry) => (
@@ -198,12 +204,13 @@ export default function CenterFocusLane({
       );
     }
 
+    const failureEntries = state === 'peek' ? outcomes.failures.slice(0, 3) : outcomes.failures;
     return (
       <ul className="space-y-2 text-xs text-rose-100">
-        {outcomes.failures.length === 0 ? (
+        {failureEntries.length === 0 ? (
           <li className="text-slate-300">No unresolved failures.</li>
         ) : (
-          outcomes.failures.map((failure) => (
+          failureEntries.map((failure) => (
             <li key={failure.id} className="rounded-md border border-rose-900/40 bg-rose-950/20 px-2 py-1">
               {failure.title}
             </li>

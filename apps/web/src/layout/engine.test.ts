@@ -49,4 +49,12 @@ describe('phase 4B lane layout engine', () => {
     expect(plan.dominantCardId).toBe('failures');
     expect(plan.preset).toBe('STABILIZE');
   });
+
+  it('maps dominant/supporting/compact cards into focus/peek/chip states', () => {
+    const plan = generateLayoutPlan({ ...baseSignals, dialogueOpen: true, remindersCount: 5, remindersDueToday: 2 });
+
+    expect(plan.cardStates[plan.dominantCardId]).toBe('focus');
+    plan.supportingCardIds.forEach((id) => expect(plan.cardStates[id]).toBe('peek'));
+    plan.compactCardIds.forEach((id) => expect(plan.cardStates[id]).toBe('chip'));
+  });
 });

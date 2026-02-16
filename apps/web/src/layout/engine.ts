@@ -1,5 +1,5 @@
 import type { LayoutSignals, Severity } from './signals';
-import type { LayoutPlan, LayoutPreset, VictusCardId } from './types';
+import type { CardState, LayoutPlan, LayoutPreset, VictusCardId } from './types';
 
 type ScoredCard = {
   id: VictusCardId;
@@ -125,10 +125,23 @@ export function generateLayoutPlan(signals: LayoutSignals): LayoutPlan {
     rightContextCardIds.splice(0, rightContextCardIds.length, 'failures', ...remaining);
   }
 
+  const cardStates: Partial<Record<VictusCardId, CardState>> = {
+    [dominantCardId]: 'focus'
+  };
+
+  supportingCardIds.forEach((id) => {
+    cardStates[id] = 'peek';
+  });
+
+  compactCardIds.forEach((id) => {
+    cardStates[id] = 'chip';
+  });
+
   return {
     dominantCardId,
     supportingCardIds,
     compactCardIds,
+    cardStates,
     rightContextCardIds,
     preset: getPreset(signals, dominantCardId),
     generatedAt: Date.now(),

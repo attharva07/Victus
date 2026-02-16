@@ -93,7 +93,6 @@ function App() {
   const [activeView, setActiveView] = useState<VictusView>('overview');
   const [dialogueMessages, setDialogueMessages] = useState<DialogueMessage[]>(dialogueSeed);
   const [signals, setSignals] = useState<LayoutSignals>(getInitialSignals());
-  const [expandedCardIds, setExpandedCardIds] = useState<Set<string>>(new Set(['systemOverview']));
   const [highlightedContextItemId, setHighlightedContextItemId] = useState<string | undefined>();
 
   const timeline = useMemo(
@@ -145,20 +144,7 @@ function App() {
       userTyping: false
     }));
 
-    setExpandedCardIds((previous) => new Set([...previous, 'dialogue']));
     setActiveView('overview');
-  };
-
-  const toggleExpandCard = (cardId: string) => {
-    setExpandedCardIds((previous) => {
-      const next = new Set(previous);
-      if (next.has(cardId)) {
-        next.delete(cardId);
-      } else {
-        next.add(cardId);
-      }
-      return next;
-    });
   };
 
   const simulate = () => {
@@ -200,12 +186,12 @@ function App() {
             <div className="grid h-full grid-cols-[minmax(0,1fr)_320px] gap-4">
               <CenterFocusLane
                 plan={plan}
+                signals={signals}
                 today={timeline.today}
                 upcoming={timeline.upcoming}
                 outcomes={outcomes}
                 dialogueMessages={dialogueMessages}
-                expandedCardIds={expandedCardIds}
-                onToggleCard={toggleExpandCard}
+                onToggleCard={() => undefined}
               />
               <RightContextLane
                 orderedCardIds={plan.rightContextCardIds}
@@ -231,6 +217,7 @@ function App() {
       </div>
 
       <CommandDock
+        alignToDialogue={plan.dominantCardId === 'dialogue'}
         onInteract={() => setSignals((previous) => ({ ...previous, dialogueOpen: true }))}
         onTypingChange={(typing) => setSignals((previous) => ({ ...previous, dialogueOpen: true, userTyping: typing }))}
         onSubmit={handleCommandSubmit}
