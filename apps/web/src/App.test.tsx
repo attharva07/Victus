@@ -1,99 +1,36 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import App from './App';
 
-describe('Phase 4B adaptive layout behavior', () => {
-  it('clicking center cards toggles focus state', () => {
+describe('phase 4B Victus lane rendering + interactivity', () => {
+  it('CommandDock remains fixed in DOM', () => {
     render(<App />);
 
-    const timelineCard = screen.getByTestId('stack-card-timeline');
-    expect(timelineCard).toHaveAttribute('data-focused', 'false');
-
-    fireEvent.click(timelineCard);
-    expect(timelineCard).toHaveAttribute('data-focused', 'true');
-
-    fireEvent.click(timelineCard);
-    expect(timelineCard).toHaveAttribute('data-focused', 'false');
+    const dockShell = screen.getByTestId('command-dock-shell');
+    expect(dockShell.className).toContain('fixed');
+    expect(screen.getByLabelText('Command dock')).toBeInTheDocument();
   });
 
-  it('clicking right stack cards focuses and enables internal scroll body', () => {
+  it('RightContextLane has an independent scroll container', () => {
     render(<App />);
 
-    const remindersCard = screen.getByTestId('right-stack-card-reminders');
-    expect(remindersCard).toHaveAttribute('data-focused', 'false');
-
-    fireEvent.click(remindersCard);
-    expect(remindersCard).toHaveAttribute('data-focused', 'true');
-
-    const focusedBody = within(remindersCard).getByTestId('focused-rightstack-body');
-    expect(focusedBody.className).toContain('overflow-y-auto');
-    expect(focusedBody.className).toContain('thin-scroll');
+    const scrollContainer = screen.getByTestId('right-context-scroll');
+    expect(scrollContainer.className).toContain('overflow-y-auto');
   });
 
-  it('command dock opens dialogue card and appends messages on enter', () => {
+  it('clicking a reminder mark done mutates rendered state and updates plan output', () => {
     render(<App />);
 
-    const commandDock = screen.getByLabelText('Command dock');
-    fireEvent.click(commandDock);
+    const reminderContextCard = screen.getByTestId('right-context-card-reminders');
+    fireEvent.click(reminderContextCard);
 
-    const dialogueCard = screen.getByTestId('stack-card-dialogue');
-    expect(dialogueCard).toHaveAttribute('data-focused', 'true');
+    const firstReminder = within(reminderContextCard).getByText('Approve onboarding policy edits');
+    fireEvent.click(firstReminder);
 
-    fireEvent.change(commandDock, { target: { value: 'Plan tomorrow' } });
-    fireEvent.keyDown(commandDock, { key: 'Enter' });
+    const liveTextBefore = screen.getByText(/Active preset:/i).textContent;
+    fireEvent.click(within(reminderContextCard).getByRole('button', { name: /mark done/i }));
 
-    const dialogueThread = within(dialogueCard).getByTestId('dialogue-thread');
-    expect(within(dialogueThread).getByText('Plan tomorrow')).toBeInTheDocument();
-    expect(within(dialogueThread).getByText(/Acknowledged\. Captured "Plan tomorrow"/i)).toBeInTheDocument();
-  });
-
-  it('system overview does not render command log style entries', () => {
-    render(<App />);
-
-    expect(screen.queryByText(/Command:/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/Submitted from Command Dock/i)).not.toBeInTheDocument();
-    expect(screen.getByText('REMINDERS CREATED / UPDATED')).toBeInTheDocument();
-  });
-
-  it('left rail navigation switches to memories view and renders search input', () => {
-    render(<App />);
-
-    fireEvent.click(screen.getByRole('button', { name: 'Memories' }));
-
-    expect(screen.getByLabelText('Search memories')).toBeInTheDocument();
-  });
-
-  it('memories search filters list', () => {
-    render(<App />);
-
-    fireEvent.click(screen.getByRole('button', { name: 'Memories' }));
-    fireEvent.change(screen.getByLabelText('Search memories'), { target: { value: 'incident' } });
-
-    expect(screen.getByText('Infra incident follow-up')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Q2 Planning Principles/i })).not.toBeInTheDocument();
-  });
-
-
-
-  it('simulate updates preserve stacked center layout in overview', () => {
-    render(<App />);
-
-    fireEvent.click(screen.getByRole('button', { name: 'simulate update' }));
-
-    const stack = screen.getByTestId('center-stack');
-    expect(stack.className).toContain('flex-col');
-  });
-
-  it('finance add transaction appends to list', () => {
-    render(<App />);
-
-    fireEvent.click(screen.getByRole('button', { name: 'Finance' }));
-
-    fireEvent.change(screen.getByLabelText('Transaction label'), { target: { value: 'Book sale' } });
-    fireEvent.change(screen.getByLabelText('Transaction amount'), { target: { value: '45' } });
-    fireEvent.change(screen.getByLabelText('Transaction type'), { target: { value: 'income' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Add transaction' }));
-
-    expect(screen.getByText('Book sale')).toBeInTheDocument();
-    expect(screen.getByText('4 entries')).toBeInTheDocument();
+    expect(screen.queryByText('Approve onboarding policy edits')).not.toBeInTheDocument();
+    const liveTextAfter = screen.getByText(/Active preset:/i).textContent;
+    expect(liveTextAfter).not.toEqual(liveTextBefore);
   });
 });

@@ -1,13 +1,13 @@
 const statuses = [
-  ['Mode', 'operational'],
-  ['Planner', 'adaptive'],
-  ['Executor', 'listening'],
-  ['Domain', 'system']
+  ['Victus', 'adaptive'],
+  ['Planner', 'listening'],
+  ['Executor', 'ready'],
+  ['Lane Engine', 'deterministic']
 ];
 
-export default function BottomStrip({ confidence, onSimulate }: { confidence: string; onSimulate: () => void }) {
+export default function BottomStatusStrip({ confidence, onSimulate }: { confidence: string; onSimulate: () => void }) {
   return (
-    <footer className="fixed bottom-0 left-0 right-0 border-t border-borderSoft/70 bg-bg/95 px-6 py-2 text-[11px] text-slate-500 backdrop-blur">
+    <footer data-testid="bottom-status-strip" className="fixed bottom-0 left-0 right-0 z-30 border-t border-borderSoft/70 bg-bg/95 px-6 py-2 text-[11px] text-slate-500 backdrop-blur">
       <div className="mx-auto flex w-full max-w-[1500px] items-center justify-between gap-4">
         <div className="flex flex-wrap items-center gap-x-5 gap-y-1">
           {statuses.map(([label, value]) => (

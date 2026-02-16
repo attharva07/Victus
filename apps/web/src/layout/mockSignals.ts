@@ -4,78 +4,59 @@ export function getInitialSignals(): LayoutSignals {
   return {
     remindersCount: 2,
     remindersDueToday: 1,
-    alertsCount: 1,
-    alertsSeverity: 'low',
-    failuresCount: 0,
-    failuresSeverity: 'none',
     approvalsPending: 1,
+    alertsCount: 2,
+    alertsSeverity: 'low',
+    failuresCount: 1,
+    failuresSeverity: 'none',
     workflowsActive: 2,
-    confidence: 'stable',
-    confidenceScore: 82,
     dialogueOpen: false,
-    focusMode: 'default',
-    updatedAt: 1_000
+    userTyping: false,
+    confidenceScore: 82,
+    confidenceStability: 'stable'
   };
 }
 
 export function simulateUpdate(prev: LayoutSignals): LayoutSignals {
-  const phase = Math.floor(prev.updatedAt / 1_000) % 4;
+  const step = (prev.remindersCount + prev.approvalsPending + prev.failuresCount) % 3;
 
-  if (phase === 0) {
+  if (step === 0) {
     return {
       ...prev,
-      failuresCount: 2,
+      failuresCount: Math.max(prev.failuresCount, 2),
       failuresSeverity: 'high',
-      alertsCount: 2,
+      approvalsPending: prev.approvalsPending + 1,
+      alertsCount: prev.alertsCount + 1,
       alertsSeverity: 'medium',
-      approvalsPending: prev.approvalsPending + 1,
-      confidence: 'drifting',
-      confidenceScore: 56,
-      focusMode: 'review',
-      updatedAt: prev.updatedAt + 1_000
+      confidenceScore: Math.max(35, prev.confidenceScore - 18),
+      confidenceStability: 'drifting',
+      dialogueOpen: false,
+      userTyping: false
     };
   }
 
-  if (phase === 1) {
+  if (step === 1) {
     return {
       ...prev,
-      failuresCount: 3,
+      failuresCount: prev.failuresCount + 1,
       failuresSeverity: 'critical',
-      approvalsPending: prev.approvalsPending + 1,
-      remindersDueToday: Math.min(prev.remindersDueToday + 1, prev.remindersCount + 1),
-      confidence: 'unstable',
-      confidenceScore: 28,
-      focusMode: 'recovery',
-      updatedAt: prev.updatedAt + 1_000
-    };
-  }
-
-  if (phase === 2) {
-    return {
-      ...prev,
-      failuresCount: 1,
-      failuresSeverity: 'medium',
-      alertsCount: 1,
-      alertsSeverity: 'low',
-      approvalsPending: Math.max(0, prev.approvalsPending - 1),
-      confidence: 'drifting',
-      confidenceScore: 48,
-      focusMode: 'focus',
-      updatedAt: prev.updatedAt + 1_000
+      approvalsPending: prev.approvalsPending + 2,
+      remindersDueToday: prev.remindersDueToday + 1,
+      confidenceScore: Math.max(20, prev.confidenceScore - 25),
+      confidenceStability: 'unstable',
+      dialogueOpen: false,
+      userTyping: false
     };
   }
 
   return {
     ...prev,
-    failuresCount: 0,
-    failuresSeverity: 'none',
-    remindersDueToday: 1,
-    approvalsPending: 1,
-    alertsCount: 1,
+    failuresCount: Math.max(0, prev.failuresCount - 1),
+    failuresSeverity: 'medium',
+    approvalsPending: Math.max(1, prev.approvalsPending - 1),
+    alertsCount: Math.max(1, prev.alertsCount - 1),
     alertsSeverity: 'low',
-    confidence: 'stable',
-    confidenceScore: 86,
-    focusMode: 'default',
-    updatedAt: prev.updatedAt + 1_000
+    confidenceScore: Math.min(95, prev.confidenceScore + 10),
+    confidenceStability: 'drifting'
   };
 }

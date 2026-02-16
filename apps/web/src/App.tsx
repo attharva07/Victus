@@ -1,18 +1,25 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import BottomStrip from './components/BottomStrip';
-import CardStack from './components/CardStack';
+import { useMemo, useState } from 'react';
+import BottomStatusStrip from './components/BottomStrip';
+import CenterFocusLane from './components/CenterFocusLane';
 import CommandDock from './components/CommandDock';
 import LeftRail, { type VictusView } from './components/LeftRail';
-import RightStack from './components/RightStack';
+import RightContextLane from './components/RightContextLane';
 import CameraScreen from './views/CameraScreen';
 import FilesScreen from './views/FilesScreen';
 import FinanceScreen from './views/FinanceScreen';
 import MemoriesScreen from './views/MemoriesScreen';
-import { initialVictusState, type VictusState } from './data/victusStore';
+import {
+  acknowledge,
+  approve,
+  deny,
+  initialVictusState,
+  markDone,
+  type VictusState,
+  type VictusItem
+} from './data/victusStore';
 import { generateLayoutPlan } from './layout/engine';
 import { getInitialSignals, simulateUpdate } from './layout/mockSignals';
 import type { LayoutSignals } from './layout/signals';
-import type { LayoutPlan } from './layout/types';
 
 type DialogueMessage = {
   id: string;
@@ -21,36 +28,78 @@ type DialogueMessage = {
 };
 
 const dialogueSeed: DialogueMessage[] = [
-  { id: 'd1', role: 'system', text: 'Dialogue opened. I can help route your command into a workflow.' },
-  { id: 'd2', role: 'user', text: 'Show me unresolved approvals and next actions.' }
+  { id: 'd1', role: 'system', text: 'Victus is active. Issue a command when ready.' },
+  { id: 'd2', role: 'user', text: 'Bring urgent work to the top.' }
 ];
 
+function deriveSeverity(count: number): LayoutSignals['failuresSeverity'] {
+  if (count >= 3) return 'critical';
+  if (count >= 2) return 'high';
+  if (count === 1) return 'medium';
+  return 'none';
+}
+
+function deriveAlertSeverity(alerts: VictusItem[]): LayoutSignals['alertsSeverity'] {
+  const pending = alerts.filter((item) => !item.acknowledged);
+  if (pending.length >= 3) return 'high';
+  if (pending.length >= 2) return 'medium';
+  if (pending.length === 1) return 'low';
+  return 'none';
+}
+
+function recalculateSignals(state: VictusState, previous: LayoutSignals): LayoutSignals {
+  const reminders = state.contextCards
+    .find((card) => card.kind === 'reminders')
+    ?.itemIds.map((id) => state.items[id])
+    .filter(Boolean)
+    .filter((item) => item.status === 'active') ?? [];
+
+  const approvals = state.contextCards
+    .find((card) => card.kind === 'approvals')
+    ?.itemIds.map((id) => state.items[id])
+    .filter(Boolean)
+    .filter((item) => item.approvalState === 'pending') ?? [];
+
+  const alerts = state.contextCards.find((card) => card.kind === 'alerts')?.itemIds.map((id) => state.items[id]).filter(Boolean) ?? [];
+  const failures =
+    state.contextCards
+      .find((card) => card.kind === 'failures')
+      ?.itemIds.map((id) => state.items[id])
+      .filter(Boolean)
+      .filter((item) => item.status === 'active') ?? [];
+
+  const workflows =
+    state.contextCards
+      .find((card) => card.kind === 'workflows')
+      ?.itemIds.map((id) => state.items[id])
+      .filter(Boolean)
+      .filter((item) => item.workflowState !== 'paused') ?? [];
+
+  return {
+    ...previous,
+    remindersCount: reminders.length,
+    remindersDueToday: reminders.filter((item) => item.timeLabel.includes('due') || item.timeLabel.includes('left')).length,
+    approvalsPending: approvals.length,
+    alertsCount: alerts.length,
+    alertsSeverity: deriveAlertSeverity(alerts),
+    failuresCount: failures.length,
+    failuresSeverity: deriveSeverity(failures.length),
+    workflowsActive: workflows.length
+  };
+}
+
 function App() {
-  const [state] = useState<VictusState>(initialVictusState);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [state, setState] = useState<VictusState>(initialVictusState);
   const [activeView, setActiveView] = useState<VictusView>('overview');
   const [dialogueMessages, setDialogueMessages] = useState<DialogueMessage[]>(dialogueSeed);
   const [signals, setSignals] = useState<LayoutSignals>(getInitialSignals());
-  const [manualFocusCardId, setManualFocusCardId] = useState<string | undefined>();
-  const prevPlanRef = useRef<LayoutPlan | undefined>();
-
-  useEffect(() => {
-    const onEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setSelectedId(null);
-        setManualFocusCardId(undefined);
-      }
-    };
-
-    window.addEventListener('keydown', onEscape);
-    return () => window.removeEventListener('keydown', onEscape);
-  }, []);
+  const [expandedCardIds, setExpandedCardIds] = useState<Set<string>>(new Set(['systemOverview']));
+  const [highlightedContextItemId, setHighlightedContextItemId] = useState<string | undefined>();
 
   const timeline = useMemo(
     () => ({
       today: state.timeline.today.map((id) => state.items[id]).filter(Boolean),
-      upcoming: state.timeline.upcoming.map((id) => state.items[id]).filter(Boolean),
-      completed: state.timeline.completed.map((id) => state.items[id]).filter(Boolean)
+      upcoming: state.timeline.upcoming.map((id) => state.items[id]).filter(Boolean)
     }),
     [state]
   );
@@ -59,99 +108,140 @@ function App() {
     () => {
       const all = Object.values(state.items);
       return {
-        reminders: all.filter((item) => item.kind === 'reminder'),
+        reminders: all.filter((item) => item.kind === 'reminder' && item.status === 'active'),
         approvals: all.filter((item) => item.kind === 'approval'),
         workflows: all.filter((item) => item.kind === 'workflow'),
-        failures: all.filter((item) => item.kind === 'failure'),
+        failures: all.filter((item) => item.kind === 'failure' && item.status === 'active'),
         alerts: all.filter((item) => item.kind === 'alert')
       };
     },
     [state.items]
   );
 
-  const plan = useMemo(() => generateLayoutPlan(signals, prevPlanRef.current), [signals]);
+  const plan = useMemo(() => generateLayoutPlan(signals), [signals]);
 
-  useEffect(() => {
-    prevPlanRef.current = plan;
-  }, [plan]);
-
-  const handleCommandDockIntent = () => {
-    if (activeView !== 'overview') {
-      setActiveView('overview');
-    }
-    setSignals((prev) => ({ ...prev, dialogueOpen: true, updatedAt: prev.updatedAt + 1 }));
+  const onMutateState = (mutator: (current: VictusState) => VictusState) => {
+    setState((current) => {
+      const next = mutator(current);
+      setSignals((previous) => recalculateSignals(next, previous));
+      return next;
+    });
   };
 
   const handleCommandSubmit = (text: string) => {
     const clean = text.trim();
     if (!clean) return;
 
-    handleCommandDockIntent();
     const stamp = Date.now();
-    setDialogueMessages((prev) => [
-      ...prev,
+    setDialogueMessages((previous) => [
+      ...previous,
       { id: `d-user-${stamp}`, role: 'user', text: clean },
-      { id: `d-system-${stamp}`, role: 'system', text: `Acknowledged. Captured "${clean}" for the next workflow step.` }
+      { id: `d-system-${stamp}`, role: 'system', text: `Command accepted: ${clean}` }
     ]);
+
+    setSignals((previous) => ({
+      ...previous,
+      dialogueOpen: true,
+      userTyping: false
+    }));
+
+    setExpandedCardIds((previous) => new Set([...previous, 'dialogue']));
+    setActiveView('overview');
   };
 
-  const applySimulatedSignals = () => {
-    setSignals((prev) => simulateUpdate({ ...prev, dialogueOpen: false }));
+  const toggleExpandCard = (cardId: string) => {
+    setExpandedCardIds((previous) => {
+      const next = new Set(previous);
+      if (next.has(cardId)) {
+        next.delete(cardId);
+      } else {
+        next.add(cardId);
+      }
+      return next;
+    });
+  };
+
+  const simulate = () => {
+    setSignals((previous) => simulateUpdate(previous));
+    onMutateState((current) => {
+      const next = { ...current };
+      if (!next.items.f2) {
+        next.items = {
+          ...next.items,
+          f2: {
+            id: 'f2',
+            kind: 'failure',
+            title: 'Replay backlog exceeded',
+            detail: 'Failure simulator added backlog pressure.',
+            timeLabel: 'just now',
+            type: 'system',
+            source: 'Simulator',
+            domain: 'Automation',
+            createdAt: '2026-02-16 10:00',
+            updatedAt: '2026-02-16 10:00',
+            status: 'active'
+          }
+        };
+        next.contextCards = next.contextCards.map((card) =>
+          card.kind === 'failures' ? { ...card, itemIds: ['f2', ...card.itemIds] } : card
+        );
+      }
+      return next;
+    });
   };
 
   return (
     <div className="h-screen overflow-hidden bg-bg text-slate-200">
-      <div className="grid h-full grid-cols-[64px_minmax(0,1fr)_320px] gap-4 px-3 pb-28 pt-3">
+      <div className="grid h-full grid-cols-[64px_minmax(0,1fr)] gap-4 px-3 pb-24 pt-3">
         <LeftRail activeView={activeView} onChangeView={(view) => setActiveView(view)} />
 
         <main className="h-full overflow-hidden">
-          {renderView()}
-        </main>
+          {activeView === 'overview' ? (
+            <div className="grid h-full grid-cols-[minmax(0,1fr)_320px] gap-4">
+              <CenterFocusLane
+                plan={plan}
+                today={timeline.today}
+                upcoming={timeline.upcoming}
+                outcomes={outcomes}
+                dialogueMessages={dialogueMessages}
+                expandedCardIds={expandedCardIds}
+                onToggleCard={toggleExpandCard}
+              />
+              <RightContextLane
+                orderedCardIds={plan.rightContextCardIds}
+                cards={state.contextCards}
+                items={state.items}
+                highlightedId={highlightedContextItemId}
+                onHighlight={setHighlightedContextItemId}
+                actions={{
+                  onMarkReminderDone: (id) => onMutateState((current) => markDone(current, id)),
+                  onApprove: (id) => onMutateState((current) => approve(current, id)),
+                  onDeny: (id) => onMutateState((current) => deny(current, id)),
+                  onAcknowledgeAlert: (id) => onMutateState((current) => acknowledge(current, id))
+                }}
+              />
+            </div>
+          ) : null}
 
-        <section className="h-full overflow-hidden">
-          <RightStack
-            cards={state.contextCards}
-            items={state.items}
-            selectedId={selectedId ?? undefined}
-            onSelect={setSelectedId}
-            plan={plan}
-            focusedCardId={manualFocusCardId}
-            onFocusCard={setManualFocusCardId}
-          />
-        </section>
+          {activeView === 'memories' ? <MemoriesScreen /> : null}
+          {activeView === 'finance' ? <FinanceScreen /> : null}
+          {activeView === 'files' ? <FilesScreen /> : null}
+          {activeView === 'camera' ? <CameraScreen /> : null}
+        </main>
       </div>
 
-      <CommandDock onInteract={handleCommandDockIntent} onSubmit={handleCommandSubmit} />
-      <BottomStrip confidence={`${signals.confidence} (${signals.confidenceScore})`} onSimulate={applySimulatedSignals} />
+      <CommandDock
+        onInteract={() => setSignals((previous) => ({ ...previous, dialogueOpen: true }))}
+        onTypingChange={(typing) => setSignals((previous) => ({ ...previous, dialogueOpen: true, userTyping: typing }))}
+        onSubmit={handleCommandSubmit}
+      />
+      <BottomStatusStrip confidence={`${signals.confidenceStability} (${signals.confidenceScore})`} onSimulate={simulate} />
 
       <div className="sr-only" aria-live="polite">
-        Active preset: {plan.preset}
+        Active preset: {plan.preset}. Dominant: {plan.dominantCardId}. remindersCount: {signals.remindersCount}.
       </div>
     </div>
   );
-
-  function renderView() {
-    if (activeView === 'overview') {
-      return (
-        <CardStack
-          today={timeline.today}
-          upcoming={timeline.upcoming}
-          outcomes={outcomes}
-          dialogueMessages={dialogueMessages}
-          selectedId={selectedId ?? undefined}
-          onSelect={setSelectedId}
-          plan={plan}
-          focusedCardId={manualFocusCardId}
-          onFocusCard={setManualFocusCardId}
-        />
-      );
-    }
-
-    if (activeView === 'memories') return <MemoriesScreen />;
-    if (activeView === 'finance') return <FinanceScreen />;
-    if (activeView === 'files') return <FilesScreen />;
-    return <CameraScreen />;
-  }
 }
 
 export default App;

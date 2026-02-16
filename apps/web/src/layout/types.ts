@@ -1,19 +1,22 @@
-export type CardSize = 'XS' | 'S' | 'M' | 'L' | 'XL';
+export type VictusCardId =
+  | 'systemOverview'
+  | 'dialogue'
+  | 'timeline'
+  | 'worldTldr'
+  | 'failures'
+  | 'reminders'
+  | 'approvals'
+  | 'alerts'
+  | 'workflows';
 
-export type Zone = 'center' | 'right';
-
-export type CardPlacement = {
-  id: string;
-  zone: Zone;
-  size: CardSize;
-  collapsed?: boolean;
-  priority: number;
-};
+export type LayoutPreset = 'CALM' | 'ACTIVE' | 'STABILIZE' | 'DIALOGUE';
 
 export type LayoutPlan = {
-  preset: 'P1' | 'P2' | 'P3';
-  placements: CardPlacement[];
-  activeCardId?: string;
+  dominantCardId: VictusCardId;
+  supportingCardIds: VictusCardId[];
+  compactCardIds: VictusCardId[];
+  rightContextCardIds: VictusCardId[];
+  preset: LayoutPreset;
   generatedAt: number;
   ttlSeconds: number;
 };
