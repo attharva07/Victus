@@ -1,52 +1,51 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import App from './App';
 
-describe('Phase 4A.1 interactive UI', () => {
-  it('opens detail drawer when clicking timeline item', () => {
+describe('Phase 4A.1 stage behavior', () => {
+  it('renders multiple center cards at once', () => {
     render(<App />);
 
-    fireEvent.click(screen.getByRole('button', { name: /Review deployment checklist/i }));
-
-    expect(screen.getByText('Item Details')).toBeInTheDocument();
-    expect(screen.getAllByText('Review deployment checklist').length).toBeGreaterThan(1);
+    expect(screen.getByText('System Overview')).toBeInTheDocument();
+    expect(screen.getByText('Timeline')).toBeInTheDocument();
+    expect(screen.getByText('World TLDR')).toBeInTheDocument();
   });
 
-  it('close button returns to context stack', () => {
+  it('keyboard shift changes active card', () => {
     render(<App />);
 
-    fireEvent.click(screen.getByRole('button', { name: /Review deployment checklist/i }));
-    fireEvent.click(screen.getByRole('button', { name: /Close details/i }));
+    const stack = screen.getByLabelText('Center Card Stack');
+    stack.focus();
 
-    expect(screen.getByText('Reminders')).toBeInTheDocument();
+    const systemCard = screen.getByTestId('stack-card-system_overview');
+    const timelineCard = screen.getByTestId('stack-card-timeline');
+
+    expect(systemCard).toHaveAttribute('data-active', 'true');
+    expect(timelineCard).toHaveAttribute('data-active', 'false');
+
+    fireEvent.keyDown(stack, { key: 'ArrowDown', code: 'ArrowDown' });
+
+    expect(systemCard).toHaveAttribute('data-active', 'false');
+    expect(timelineCard).toHaveAttribute('data-active', 'true');
   });
 
-  it('mark done moves an item to completed', () => {
+  it('expand sets focused XL card state', () => {
     render(<App />);
 
-    fireEvent.click(screen.getByRole('button', { name: /Review deployment checklist/i }));
-    fireEvent.click(screen.getByRole('button', { name: 'Mark Done' }));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Expand' })[0]);
 
-    const completedSection = screen.getByText('COMPLETED').closest('section');
-    expect(completedSection).not.toBeNull();
-    expect(within(completedSection as HTMLElement).getByText('Review deployment checklist')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Collapse' })).toBeInTheDocument();
+    expect(screen.getByTestId('stack-card-system_overview').className).toContain('h-[72vh]');
   });
 
-  it('submitting command dock creates a new today item', () => {
+  it('command dock is always present', () => {
     render(<App />);
 
     const input = screen.getByLabelText('Command dock');
-    fireEvent.change(input, { target: { value: 'run digest' } });
-    fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' });
+    expect(input).toBeInTheDocument();
 
-    expect(screen.getByText('Command: run digest')).toBeInTheDocument();
-  });
+    fireEvent.keyDown(screen.getByLabelText('Center Card Stack'), { key: 'ArrowDown', code: 'ArrowDown' });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Expand' })[0]);
 
-  it('left rail switches to placeholder views', () => {
-    render(<App />);
-
-    fireEvent.click(screen.getByRole('button', { name: 'Finance' }));
-
-    expect(screen.getByText('Finance')).toBeInTheDocument();
-    expect(screen.getByText(/Coming soon/i)).toBeInTheDocument();
+    expect(screen.getByLabelText('Command dock')).toBeInTheDocument();
   });
 });

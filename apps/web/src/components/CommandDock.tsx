@@ -5,7 +5,7 @@ export default function CommandDock({ onSubmit }: { onSubmit: (value: string) =>
   const [expanded, setExpanded] = useState(false);
 
   return (
-    <div className="pointer-events-none absolute bottom-5 left-1/2 w-full -translate-x-1/2 px-4">
+    <div className="pointer-events-none fixed bottom-10 left-1/2 z-30 w-full -translate-x-1/2 px-4">
       <div
         className={`pointer-events-auto mx-auto rounded-xl border border-borderSoft bg-panelSoft/95 transition-all ${expanded ? 'w-full max-w-xl p-3' : 'w-72 p-2'}`}
       >
