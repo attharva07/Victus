@@ -1,92 +1,61 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import App from './App';
 
-describe('phase 4B.2 interactions + transitions + command dock', () => {
-  it('clicking center card header expands and clicking again collapses', () => {
+describe('phase 4B adaptive layout interactions', () => {
+  it('context lane is independently scrollable', () => {
     render(<App />);
 
-    const timelineCard = screen.getByTestId('center-card-timeline');
-    const timelineHeader = screen.getByTestId('center-card-header-timeline');
+    const root = screen.getByTestId('context-stack-container');
+    const scroller = screen.getByTestId('right-context-scroll');
 
-    expect(timelineCard).toHaveAttribute('data-card-state', 'peek');
-
-    fireEvent.click(timelineHeader);
-    expect(timelineCard).toHaveAttribute('data-card-state', 'focus');
-
-    fireEvent.click(timelineHeader);
-    expect(timelineCard).toHaveAttribute('data-card-state', 'peek');
+    expect(root.className).toContain('h-full');
+    expect(root.className).toContain('min-h-0');
+    expect(scroller.className).toContain('overflow-y-auto');
+    expect(scroller.className).toContain('h-full');
   });
 
-  it('clicking a button inside card does not collapse it', () => {
+  it('clicking widget header toggles expanded state', () => {
     render(<App />);
 
-    const timelineCard = screen.getByTestId('center-card-timeline');
-    const timelineHeader = screen.getByTestId('center-card-header-timeline');
+    const timeline = screen.getByTestId('widget-timeline');
+    const header = screen.getByTestId('widget-timeline-header');
 
-    fireEvent.click(timelineHeader);
-    expect(timelineCard).toHaveAttribute('data-card-state', 'focus');
-
-    fireEvent.click(screen.getByRole('button', { name: /simulate update/i }));
-    expect(timelineCard).toHaveAttribute('data-card-state', 'focus');
+    expect(timeline).toHaveAttribute('data-expanded', 'false');
+    fireEvent.click(header);
+    expect(timeline).toHaveAttribute('data-expanded', 'true');
+    fireEvent.click(header);
+    expect(timeline).toHaveAttribute('data-expanded', 'false');
   });
 
-  it('approve removes approval item and adds timeline system event', () => {
+  it('approve/deny updates approvals count and resolves item', () => {
     vi.useFakeTimers();
     render(<App />);
 
-    const container = screen.getByTestId('context-stack-container');
-    fireEvent.click(within(container).getByText('Approvals'));
+    const approvalsWidget = screen.getByTestId('widget-approvals');
+    expect(within(approvalsWidget).getByText(/Approvals \(1\)/)).toBeInTheDocument();
 
-    expect(within(container).getByText('Filesystem tool scope adjustment')).toBeInTheDocument();
-    fireEvent.click(within(container).getByRole('button', { name: 'Approve' }));
+    fireEvent.click(within(approvalsWidget).getByRole('button', { name: 'Approve' }));
 
     act(() => {
       vi.advanceTimersByTime(250);
     });
 
-    expect(within(container).queryByText('Filesystem tool scope adjustment')).not.toBeInTheDocument();
-
-    const timelineCard = screen.queryByTestId('center-card-timeline');
-    if (timelineCard) {
-      fireEvent.click(screen.getByTestId('center-card-header-timeline'));
-      expect(screen.getByText('Just now · Approval resolved: Filesystem tool scope adjustment (approved)')).toBeInTheDocument();
-    }
-
+    expect(within(approvalsWidget).getByText(/Approvals \(0\)/)).toBeInTheDocument();
+    expect(within(approvalsWidget).queryByText('Filesystem tool scope adjustment')).not.toBeInTheDocument();
     vi.useRealTimers();
   });
 
-  it('command dock expands on Ctrl+K, submits on Enter, and applies Escape rules', () => {
-    vi.useFakeTimers();
+  it('typing in command dock opens dialogue and appends message', () => {
     render(<App />);
 
-    const dockPill = screen.getByTestId('command-dock-pill');
+    expect(screen.queryByTestId('widget-dialogue')).not.toBeInTheDocument();
+
     const input = screen.getByLabelText('Command dock');
-
-    expect(dockPill).toHaveAttribute('data-expanded', 'false');
-
-    fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
-    expect(dockPill).toHaveAttribute('data-expanded', 'true');
-
-    fireEvent.change(input, { target: { value: 'Route context to finance' } });
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: 'Run context sweep' } });
     fireEvent.keyDown(input, { key: 'Enter' });
 
-    expect(screen.getByText('Route context to finance')).toBeInTheDocument();
-    expect(screen.getByText('Command accepted: Route context to finance')).toBeInTheDocument();
-    expect((input as HTMLInputElement).value).toBe('');
-
-    act(() => {
-      vi.advanceTimersByTime(3000);
-    });
-
-    fireEvent.focus(input);
-    fireEvent.change(input, { target: { value: 'keep open' } });
-    fireEvent.keyDown(input, { key: 'Escape' });
-    expect((input as HTMLInputElement).value).toBe('');
-    expect(dockPill).toHaveAttribute('data-expanded', 'true');
-
-    fireEvent.keyDown(input, { key: 'Escape' });
-    expect(dockPill).toHaveAttribute('data-expanded', 'false');
-
-    vi.useRealTimers();
+    expect(screen.getByTestId('widget-dialogue')).toBeInTheDocument();
+    expect(screen.getByText('Run context sweep')).toBeInTheDocument();
   });
 });

@@ -1,60 +1,38 @@
-import { describe, expect, it } from 'vitest';
-import { generateLayoutPlan } from './engine';
-import type { LayoutSignals } from './signals';
+import { buildLayoutPlan, needsUrgentRecompute } from './engine';
+import type { WidgetRuntimeSignals } from './types';
 
-const baseSignals: LayoutSignals = {
-  remindersCount: 2,
-  remindersDueToday: 1,
-  approvalsPending: 1,
-  alertsCount: 1,
-  alertsSeverity: 'low',
-  failuresCount: 0,
-  failuresSeverity: 'none',
-  workflowsActive: 1,
-  dialogueOpen: false,
-  userTyping: false,
-  confidenceScore: 82,
-  confidenceStability: 'stable'
-};
+describe('adaptive layout engine', () => {
+  const signals: WidgetRuntimeSignals = {
+    dialogue: { urgency: 20, confidence: 80 },
+    systemOverview: { urgency: 42, confidence: 72 },
+    timeline: { urgency: 56, confidence: 70 },
+    healthPulse: { urgency: 48, confidence: 68 },
+    reminders: { urgency: 55, confidence: 62 },
+    alerts: { urgency: 54, confidence: 64 },
+    approvals: { urgency: 80, confidence: 66 },
+    workflows: { urgency: 36, confidence: 72 },
+    failures: { urgency: 58, confidence: 59 }
+  };
 
-describe('phase 4B lane layout engine', () => {
-  it('same signals produce deterministic card ordering and preset', () => {
-    const a = generateLayoutPlan(baseSignals);
-    const b = generateLayoutPlan(baseSignals);
+  it('is deterministic for same signals', () => {
+    const a = buildLayoutPlan(signals);
+    const b = buildLayoutPlan(signals);
 
-    expect(a.dominantCardId).toBe(b.dominantCardId);
-    expect(a.supportingCardIds).toEqual(b.supportingCardIds);
-    expect(a.compactCardIds).toEqual(b.compactCardIds);
-    expect(a.rightContextCardIds).toEqual(b.rightContextCardIds);
-    expect(a.preset).toBe(b.preset);
+    expect(a.focusPlacements).toEqual(b.focusPlacements);
+    expect(a.contextOrder).toEqual(b.contextOrder);
   });
 
-  it('dialogueOpen drives dominant dialogue unless confidence drops below 25', () => {
-    const dialoguePlan = generateLayoutPlan({ ...baseSignals, dialogueOpen: true, confidenceScore: 70 });
-    const lowConfidencePlan = generateLayoutPlan({ ...baseSignals, dialogueOpen: true, confidenceScore: 20 });
+  it('packs focus widgets into deterministic rows/columns', () => {
+    const plan = buildLayoutPlan(signals);
+    const placements = plan.focusPlacements;
 
-    expect(dialoguePlan.dominantCardId).toBe('dialogue');
-    expect(lowConfidencePlan.dominantCardId).toBe('failures');
+    expect(placements[0]?.colStart).toBe(1);
+    expect(placements.every((entry) => entry.span <= 12)).toBe(true);
   });
 
-  it('critical failures always dominate', () => {
-    const plan = generateLayoutPlan({
-      ...baseSignals,
-      failuresCount: 3,
-      failuresSeverity: 'critical',
-      dialogueOpen: true,
-      confidenceScore: 80
-    });
-
-    expect(plan.dominantCardId).toBe('failures');
-    expect(plan.preset).toBe('STABILIZE');
-  });
-
-  it('maps dominant/supporting/compact cards into focus/peek/chip states', () => {
-    const plan = generateLayoutPlan({ ...baseSignals, dialogueOpen: true, remindersCount: 5, remindersDueToday: 2 });
-
-    expect(plan.cardStates[plan.dominantCardId]).toBe('focus');
-    plan.supportingCardIds.forEach((id) => expect(plan.cardStates[id]).toBe('peek'));
-    plan.compactCardIds.forEach((id) => expect(plan.cardStates[id]).toBe('chip'));
+  it('triggers urgent recompute for high urgency approvals/failures', () => {
+    expect(needsUrgentRecompute({ approvals: { urgency: 90 } })).toBe(true);
+    expect(needsUrgentRecompute({ failures: { urgency: 84 } })).toBe(true);
+    expect(needsUrgentRecompute({ reminders: { urgency: 20 } })).toBe(false);
   });
 });
