@@ -22,6 +22,15 @@ npm run dev
 
 Open <http://localhost:5173>.
 
+
+Frontend quickstart:
+```bash
+cd apps/web && npm install && npm run dev
+# in a second terminal
+cd apps/web && npm test
+```
+
+
 ### Production prep (Option A: FastAPI serves built UI)
 Build the frontend:
 ```bash
