@@ -1,7 +1,7 @@
+import type { TimelineEvent } from '../../data/timelineStore';
+import type { DialogueMessage } from '../../data/dialogueStore';
 import type { VictusItem } from '../../data/victusStore';
 import WidgetCard from './WidgetCard';
-
-type DialogueMessage = { id: string; role: 'user' | 'system'; text: string };
 
 export function DialogueWidget({ messages, pinned, onTogglePin }: { messages: DialogueMessage[]; pinned?: boolean; onTogglePin: () => void }) {
   return (
@@ -31,17 +31,15 @@ export function SystemOverviewWidget({ reminders, approvals, failures, workflows
   );
 }
 
-export function TimelineWidget({ today, upcoming, pinned, onTogglePin }: { today: VictusItem[]; upcoming: VictusItem[]; pinned?: boolean; onTogglePin: () => void }) {
+export function TimelineWidget({ events, pinned, onTogglePin }: { events: TimelineEvent[]; pinned?: boolean; onTogglePin: () => void }) {
   return (
-    <WidgetCard title="Timeline" canExpand={today.length + upcoming.length > 4} pinned={pinned} onTogglePin={onTogglePin} testId="widget-timeline">
+    <WidgetCard title="Timeline" canExpand={events.length > 0} pinned={pinned} onTogglePin={onTogglePin} testId="widget-timeline" defaultExpanded>
       <div className="space-y-2 text-xs text-slate-300">
-        <p className="text-[10px] uppercase tracking-wide text-slate-500">Today</p>
-        {today.map((item) => (
-          <p key={item.id}>{item.timeLabel} · {item.title}</p>
-        ))}
-        <p className="text-[10px] uppercase tracking-wide text-slate-500">Upcoming</p>
-        {upcoming.map((item) => (
-          <p key={item.id}>{item.timeLabel} · {item.title}</p>
+        {events.slice(0, 12).map((event) => (
+          <div key={event.id} className="rounded border border-borderSoft/60 bg-panelSoft/35 px-2 py-1.5">
+            <p>{event.label}</p>
+            <p className="text-[10px] text-slate-500">{event.detail}</p>
+          </div>
         ))}
       </div>
     </WidgetCard>

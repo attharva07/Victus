@@ -5,16 +5,23 @@ import type {
   LayoutPlan,
   ScoredWidget,
   WidgetId,
+  WidgetRole,
   WidgetRuntimeSignals,
   WidgetSize
 } from './types';
 
-const spanMap: Record<WidgetSize, number> = {
-  XS: 3,
-  S: 4,
-  M: 6,
-  L: 8,
-  XL: 12
+const heightHintBySize: Record<WidgetSize, number> = {
+  XS: 2,
+  S: 3,
+  M: 5,
+  L: 7,
+  XL: 9
+};
+
+const roleWeight: Record<WidgetRole, number> = {
+  primary: 0,
+  secondary: 1,
+  tertiary: 2
 };
 
 const tieBreakOrder: WidgetId[] = [
@@ -62,6 +69,7 @@ function scoreWidgets(signals: WidgetRuntimeSignals, config: LayoutEngineConfig)
 
     return {
       ...widget,
+      role: runtime.role ?? 'secondary',
       size: chooseSize(score, widget.allowedSizes),
       score,
       scoreBreakdown: {
@@ -77,36 +85,33 @@ function scoreWidgets(signals: WidgetRuntimeSignals, config: LayoutEngineConfig)
 
 function deterministicSort(items: ScoredWidget[]): ScoredWidget[] {
   return [...items].sort((a, b) => {
+    if (roleWeight[a.role] !== roleWeight[b.role]) return roleWeight[a.role] - roleWeight[b.role];
     if (a.score !== b.score) return b.score - a.score;
+    if (a.id !== b.id) return a.id.localeCompare(b.id);
     return tieBreakOrder.indexOf(a.id) - tieBreakOrder.indexOf(b.id);
   });
 }
 
 function packFocus(sortedFocus: ScoredWidget[]): FocusPlacement[] {
   const placements: FocusPlacement[] = [];
-  let row = 1;
-  let usedCols = 0;
+  const columns = {
+    left: 0,
+    right: 0
+  };
 
   sortedFocus.forEach((widget) => {
-    const span = spanMap[widget.size];
-    if (usedCols + span > 12) {
-      row += 1;
-      usedCols = 0;
-    }
+    const heightHint = heightHintBySize[widget.size];
+    const column = columns.left <= columns.right ? 'left' : 'right';
+    columns[column] += heightHint;
 
     placements.push({
       id: widget.id,
-      row,
-      colStart: usedCols + 1,
-      span,
-      size: widget.size
+      score: widget.score,
+      role: widget.role,
+      sizePreset: widget.size,
+      heightHint,
+      column
     });
-
-    usedCols += span;
-    if (usedCols === 12) {
-      row += 1;
-      usedCols = 0;
-    }
   });
 
   return placements;
@@ -119,17 +124,17 @@ export function buildLayoutPlan(signals: WidgetRuntimeSignals, config: LayoutEng
 
   if (config.debug) {
     // eslint-disable-next-line no-console
-    console.debug('[layout-engine:scores]', scored.map((w) => ({ id: w.id, score: Number(w.score.toFixed(2)), ...w.scoreBreakdown })));
+    console.debug('[layout-engine:scores]', scored.map((w) => ({ id: w.id, role: w.role, score: Number(w.score.toFixed(2)), ...w.scoreBreakdown })));
   }
 
   return {
     computedAt: Date.now(),
     focusPlacements: packFocus(focus),
     contextOrder: context.map((entry) => entry.id),
-    scores: scored.reduce<LayoutPlan['scores']>((acc, widget) => {
+    scores: scored.reduce((acc, widget) => {
       acc[widget.id] = { ...widget.scoreBreakdown, total: widget.score };
       return acc;
-    }, {})
+    }, {} as LayoutPlan['scores'])
   };
 }
 

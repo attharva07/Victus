@@ -2,6 +2,8 @@ export type LaneId = 'LEFT_RAIL' | 'FOCUS' | 'CONTEXT' | 'BOTTOM_STRIP';
 
 export type WidgetSize = 'XS' | 'S' | 'M' | 'L' | 'XL';
 
+export type WidgetRole = 'primary' | 'secondary' | 'tertiary';
+
 export type WidgetId =
   | 'dialogue'
   | 'systemOverview'
@@ -42,10 +44,12 @@ export type WidgetRuntimeSignals = Partial<Record<WidgetId, {
   pinned?: boolean;
   failureBoost?: number;
   approvalBoost?: number;
+  role?: WidgetRole;
 }>>;
 
 export type ScoredWidget = WidgetDefinition & {
   score: number;
+  role: WidgetRole;
   scoreBreakdown: {
     urgency: number;
     confidence: number;
@@ -58,10 +62,11 @@ export type ScoredWidget = WidgetDefinition & {
 
 export type FocusPlacement = {
   id: WidgetId;
-  row: number;
-  colStart: number;
-  span: number;
-  size: WidgetSize;
+  score: number;
+  role: WidgetRole;
+  sizePreset: WidgetSize;
+  heightHint: number;
+  column: 'left' | 'right';
 };
 
 export type LayoutPlan = {

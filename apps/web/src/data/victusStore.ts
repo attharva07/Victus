@@ -347,36 +347,6 @@ const patchItem = (state: VictusState, id: string, patch: Partial<VictusItem>): 
 
 const removeFromLists = (list: string[], id: string) => list.filter((entry) => entry !== id);
 
-const appendSystemTimelineEvent = (state: VictusState, title: string, detail: string): VictusState => {
-  const timestamp = Date.now();
-  const eventId = `sys-${timestamp}`;
-  const event: VictusItem = {
-    id: eventId,
-    kind: 'event',
-    title,
-    detail,
-    timeLabel: 'Just now',
-    type: 'system',
-    source: 'Context Stack',
-    domain: 'Automation',
-    createdAt: stamp(),
-    updatedAt: stamp(),
-    status: 'active'
-  };
-
-  return {
-    ...state,
-    items: {
-      ...state.items,
-      [eventId]: event
-    },
-    timeline: {
-      ...state.timeline,
-      today: [eventId, ...state.timeline.today]
-    }
-  };
-};
-
 export const markDone = (state: VictusState, id: string): VictusState => {
   if (!state.items[id]) return state;
 
@@ -442,8 +412,7 @@ export const pinToReminders = (state: VictusState, id: string): VictusState => {
 export const snooze = (state: VictusState, id: string): VictusState => patchItem(state, id, { snoozedUntil: 'Tomorrow 9:00 AM' });
 
 const resolveApproval = (state: VictusState, id: string, decision: 'approved' | 'denied'): VictusState => {
-  const approval = state.items[id];
-  if (!approval) return state;
+  if (!state.items[id]) return state;
 
   const withDecision = patchItem(state, id, { approvalState: decision, status: 'resolved' });
   const trimmed = {
@@ -453,11 +422,7 @@ const resolveApproval = (state: VictusState, id: string, decision: 'approved' | 
     )
   };
 
-  return appendSystemTimelineEvent(
-    trimmed,
-    `Approval resolved: ${approval.title} (${decision})`,
-    `Approval ${approval.title} was ${decision} from Context Stack.`
-  );
+  return trimmed;
 };
 
 export const approve = (state: VictusState, id: string): VictusState => resolveApproval(state, id, 'approved');

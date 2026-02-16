@@ -1,4 +1,6 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react';
+
+const INTERACTIVE_SELECTOR = 'button, a, input, textarea, select, [role="button"], [data-no-expand="true"]';
 
 export default function WidgetCard({
   title,
@@ -45,12 +47,18 @@ export default function WidgetCard({
 
   const togglable = showExpand;
 
+  const handleToggleFromContainer = (event: MouseEvent<HTMLElement>) => {
+    if (!togglable) return;
+    if ((event.target as HTMLElement).closest(INTERACTIVE_SELECTOR)) return;
+    setExpanded((previous) => !previous);
+  };
+
   return (
     <article data-testid={testId} data-expanded={expanded ? 'true' : 'false'} className="rounded-xl border border-borderSoft/70 bg-panel/80 p-3 transition">
       <header
         data-testid={`${testId}-header`}
-        className={`mb-2 flex items-center justify-between ${togglable ? 'cursor-pointer' : ''}`}
-        onClick={() => togglable && setExpanded((previous) => !previous)}
+        className={`mb-2 flex min-h-7 items-center justify-between ${togglable ? 'cursor-pointer' : ''}`}
+        onClick={handleToggleFromContainer}
       >
         <h3 className="text-sm text-slate-100">{title}</h3>
         <div className="flex items-center gap-2">
@@ -67,15 +75,26 @@ export default function WidgetCard({
               pin
             </button>
           )}
-          {togglable ? <span className="text-[10px] text-slate-500">{expanded ? 'collapse' : 'expand'}</span> : null}
+          {togglable ? (
+            <button
+              type="button"
+              className="text-[10px] text-slate-500"
+              onClick={(event) => {
+                event.stopPropagation();
+                setExpanded((previous) => !previous);
+              }}
+            >
+              {expanded ? 'collapse' : 'expand'}
+            </button>
+          ) : null}
         </div>
       </header>
 
       <div
         ref={contentRef}
         data-testid={`${testId}-body`}
-        className={`${expanded ? 'max-h-[420px] overflow-y-auto' : 'max-h-28 overflow-hidden'} transition-all duration-200`}
-        onClick={() => togglable && setExpanded((previous) => !previous)}
+        className={`${expanded ? 'max-h-[420px] overflow-y-auto thin-scroll' : 'max-h-28 overflow-hidden'} transition-all duration-200`}
+        onClick={handleToggleFromContainer}
       >
         {children}
       </div>
