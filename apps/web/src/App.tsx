@@ -1,103 +1,116 @@
+import { useMemo, useState } from 'react';
 import BottomStatusStrip from './components/BottomStrip';
 import CommandDock from './components/CommandDock';
 import ContextLane from './components/Lanes/ContextLane';
 import FocusLane from './components/Lanes/FocusLane';
-import LeftRail from './components/LeftRail';
+import LeftRail, { type VictusView } from './components/LeftRail';
 import { AlertsWidget, ApprovalsWidget, FailuresWidget, RemindersWidget, WorkflowsWidget } from './components/widgets/ContextWidgets';
-import {
-  ApprovalsPanelWidget,
-  DialogueWidget,
-  HealthPulseWidget,
-  RemindersPanelWidget,
-  SystemOverviewWidget,
-  TimelineWidget,
-  WorkflowsBoardWidget,
-  WorldTldrWidget
-} from './components/widgets/FocusWidgets';
-import type { WidgetId } from './layout/types';
-import { useLayoutEngine } from './layout/useLayoutEngine';
-import { useVictusStore, VictusStoreProvider } from './state/store';
+import { DialogueWidget, TimelineWidget } from './components/widgets/FocusWidgets';
+import type { AdaptiveItem } from './engine/adaptiveScore';
+import { useUIState } from './store/uiState';
 import CameraScreen from './views/CameraScreen';
 import FilesScreen from './views/FilesScreen';
 import FinanceScreen from './views/FinanceScreen';
 import MemoriesScreen from './views/MemoriesScreen';
 
-function AppContent() {
-  const { state, actions } = useVictusStore();
-  const { plan, pinWidget, pinnedWidgets, resetLayout } = useLayoutEngine(state.data);
+function byKind(items: AdaptiveItem[], kind: AdaptiveItem['kind']) {
+  return items.filter((item) => item.kind === kind);
+}
 
-  if (!state.data) return <div className="h-screen bg-bg text-slate-200 p-4">Loading Victus UI state…</div>;
+export default function App() {
+  const [activeView, setActiveView] = useState<VictusView>('overview');
+  const { items, timelineEvents, layout, pinState, actions } = useUIState();
 
-  const data = state.data;
+  const grouped = useMemo(
+    () => ({
+      failures: byKind(items, 'failure'),
+      approvals: byKind(items, 'approval'),
+      alerts: byKind(items, 'alert'),
+      reminders: byKind(items, 'reminder'),
+      workflows: byKind(items, 'workflow'),
+      dialogue: byKind(items, 'dialogue')[0]
+    }),
+    [items]
+  );
 
-  const renderFocusWidget = (id: WidgetId) => {
-    const pinned = pinnedWidgets.includes(id);
-    if (id === 'dialogue') return <DialogueWidget messages={data.dialogue.messages} pinned={pinned} onTogglePin={() => pinWidget(id)} />;
-    if (id === 'timeline') return <TimelineWidget events={[...data.timeline.today, ...data.timeline.upcoming, ...data.timeline.completed]} pinned={pinned} onTogglePin={() => pinWidget(id)} />;
-    if (id === 'healthPulse') return <HealthPulseWidget failures={data.contextGroups.failures} pinned={pinned} onTogglePin={() => pinWidget(id)} />;
-    if (id === 'systemOverview') return <SystemOverviewWidget reminders={data.contextGroups.reminders.length} approvals={data.contextGroups.approvals.length} failures={data.contextGroups.failures.length} workflows={data.contextGroups.workflows.length} pinned={pinned} onTogglePin={() => pinWidget(id)} />;
-    if (id === 'worldTldr') return <WorldTldrWidget items={data.worldTldr} pinned={pinned} onTogglePin={() => pinWidget(id)} />;
-    if (id === 'workflowsBoard') return <WorkflowsBoardWidget items={data.contextGroups.workflows} onResume={actions.resumeWorkflow} pinned={pinned} onTogglePin={() => pinWidget(id)} />;
-    if (id === 'remindersPanel') return <RemindersPanelWidget items={data.contextGroups.reminders} onDone={actions.markReminderDone} pinned={pinned} onTogglePin={() => pinWidget(id)} />;
-    if (id === 'approvalsPanel') return <ApprovalsPanelWidget items={data.contextGroups.approvals} onApprove={(approvalId) => actions.decideApproval(approvalId, 'approved')} onDeny={(approvalId) => actions.decideApproval(approvalId, 'denied')} pinned={pinned} onTogglePin={() => pinWidget(id)} />;
+  const renderContextWidget = (kindId: string) => {
+    if (kindId === 'failure') return <FailuresWidget items={grouped.failures.map((i) => ({ id: i.id, title: i.title, severity: i.severity ?? 'info', ageMinutes: 0 }))} />;
+    if (kindId === 'approval') return <ApprovalsWidget items={grouped.approvals.map((i) => ({ id: i.id, title: i.title, detail: i.detail, requestedBy: 'Operator' }))} onApprove={actions.approve} onDeny={actions.deny} />;
+    if (kindId === 'alert') return <AlertsWidget items={grouped.alerts.map((i) => ({ id: i.id, title: i.title, detail: i.detail }))} />;
+    if (kindId === 'reminder') return <RemindersWidget items={grouped.reminders.map((i) => ({ id: i.id, title: i.title, due: i.detail, urgency: 'high' }))} onDone={actions.done} />;
+    if (kindId === 'workflow') return <WorkflowsWidget items={grouped.workflows.map((i) => ({ id: i.id, title: i.title, progress: 60, stepLabel: i.status, resumable: true }))} onResume={actions.resume} />;
     return null;
   };
 
-  const renderContextWidget = (id: WidgetId) => {
-    if (id === 'failures') return <FailuresWidget items={data.contextGroups.failures} />;
-    if (id === 'approvals') return <ApprovalsWidget items={data.contextGroups.approvals} onApprove={(approvalId) => actions.decideApproval(approvalId, 'approved')} onDeny={(approvalId) => actions.decideApproval(approvalId, 'denied')} />;
-    if (id === 'alerts') return <AlertsWidget items={data.contextGroups.alerts} onAck={actions.ackAlert} />;
-    if (id === 'reminders') return <RemindersWidget items={data.contextGroups.reminders} onDone={actions.markReminderDone} />;
-    if (id === 'workflows') return <WorkflowsWidget items={data.contextGroups.workflows} onResume={actions.resumeWorkflow} />;
-    return null;
+  const focusPlacements = layout.focus.map((card, index) => ({
+    id: card.item.id,
+    score: card.score,
+    role: 'secondary' as const,
+    sizePreset: card.size === 'FULL' ? 'L' : card.size === 'XL' ? 'L' : card.size,
+    heightHint: card.size === 'XL' ? 4 : card.size === 'L' ? 3 : 2,
+    column: (index % 2 === 0 ? 'left' : 'right') as 'left' | 'right'
+  }));
+
+  const contextOrder = Array.from(new Set(layout.context.map((card) => card.item.kind)));
+
+  const renderFocusWidget = (id: string) => {
+    const item = layout.focus.find((card) => card.item.id === id)?.item;
+    const pinned = Boolean(pinState[id]);
+    if (!item) return null;
+
+    if (item.kind === 'dialogue') {
+      return <DialogueWidget messages={[{ id: item.id, role: 'system', text: item.detail, createdAt: item.updatedAt }]} pinned={pinned} onTogglePin={() => actions.togglePin(item.id)} />;
+    }
+
+    return (
+      <div className="transition-all duration-300 ease-out">
+        {item.kind === 'failure' ? <FailuresWidget items={[{ id: item.id, title: item.title, severity: item.severity ?? 'critical', ageMinutes: 0 }]} /> : null}
+        {item.kind === 'approval' ? <ApprovalsWidget items={[{ id: item.id, title: item.title, detail: item.detail, requestedBy: 'Operator' }]} onApprove={actions.approve} onDeny={actions.deny} /> : null}
+        {item.kind === 'reminder' ? <RemindersWidget items={[{ id: item.id, title: item.title, due: item.detail, urgency: 'high' }]} onDone={actions.done} /> : null}
+        {item.kind === 'workflow' ? <WorkflowsWidget items={[{ id: item.id, title: item.title, progress: 60, stepLabel: item.status, resumable: true }]} onResume={actions.resume} /> : null}
+      </div>
+    );
   };
 
   return (
     <div className="h-screen overflow-hidden bg-bg text-slate-200">
       <div className="grid h-full min-h-0 grid-cols-[64px_minmax(0,1fr)] gap-4 px-3 pb-28 pt-3">
-        <LeftRail activeView={state.activeView} onChangeView={actions.setActiveView} />
+        <LeftRail activeView={activeView} onChangeView={setActiveView} />
         <main className="h-full min-h-0 overflow-hidden pb-20">
-          {state.activeView === 'overview' ? (
+          {activeView === 'overview' ? (
             <div className="grid h-full min-h-0 grid-cols-[minmax(0,1fr)_320px] gap-4">
-              <FocusLane placements={plan.focusPlacements} renderWidget={renderFocusWidget} onReset={resetLayout} showReset={false} />
-              <ContextLane orderedIds={plan.contextOrder} renderWidget={renderContextWidget} />
+              <section className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)] gap-3">
+                <TimelineWidget
+                  events={timelineEvents.map((event) => ({ ...event, bucket: 'Today' as const }))}
+                  pinned={Boolean(pinState['timeline-stream'])}
+                  onTogglePin={() => actions.togglePin('timeline-stream')}
+                />
+                <FocusLane placements={focusPlacements} renderWidget={renderFocusWidget} onReset={() => undefined} showReset={false} />
+              </section>
+              <ContextLane orderedIds={contextOrder} renderWidget={(kind) => <div className="transition-all duration-300 ease-out">{renderContextWidget(kind)}</div>} />
             </div>
           ) : null}
-          {state.activeView === 'memories' ? <MemoriesScreen /> : null}
-          {state.activeView === 'finance' ? <FinanceScreen /> : null}
-          {state.activeView === 'files' ? <FilesScreen /> : null}
-          {state.activeView === 'camera' ? <CameraScreen /> : null}
+          {activeView === 'memories' ? <MemoriesScreen /> : null}
+          {activeView === 'finance' ? <FinanceScreen /> : null}
+          {activeView === 'files' ? <FilesScreen /> : null}
+          {activeView === 'camera' ? <CameraScreen /> : null}
         </main>
       </div>
 
       <CommandDock
         alignToDialogue={true}
         onInteract={() => undefined}
-        onTypingChange={actions.setTyping}
-        onSubmit={async (text) => {
-          await actions.submitCommand(text);
-          actions.setActiveView('overview');
-        }}
+        onTypingChange={() => undefined}
+        onSubmit={async () => undefined}
       />
       <BottomStatusStrip
-        mode={data.bottomStrip.mode}
-        planner={data.bottomStrip.planner}
-        executor={data.bottomStrip.executor}
-        domain={data.bottomStrip.domain}
-        confidence={`stable (${data.bottomStrip.confidence})`}
-        onSimulate={() => {
-          const first = data.contextGroups.reminders[0];
-          if (first) void actions.markReminderDone(first.id);
-        }}
+        mode={'adaptive'}
+        planner={'active'}
+        executor={'ready'}
+        domain={'automation'}
+        confidence={'stable (78)'}
+        onSimulate={() => undefined}
       />
     </div>
-  );
-}
-
-export default function App() {
-  return (
-    <VictusStoreProvider>
-      <AppContent />
-    </VictusStoreProvider>
   );
 }
