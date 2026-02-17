@@ -1,9 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import ContextLane from './ContextLane';
 import { AlertsWidget, ApprovalsWidget, FailuresWidget, RemindersWidget, WorkflowsWidget } from '../widgets/ContextWidgets';
-import type { WidgetId } from '../../layout/types';
-
-const renderMap: Record<WidgetId, JSX.Element> = {
+const renderMap: Record<string, JSX.Element> = {
   failures: <FailuresWidget items={[{ id: 'f-1', title: 'Failure', severity: 'warning', ageMinutes: 2 }]} />,
   approvals: <ApprovalsWidget items={[]} onApprove={() => undefined} onDeny={() => undefined} />,
   alerts: <AlertsWidget items={[{ id: 'a-1', title: 'Alert', detail: 'detail' }]} />,

@@ -1,5 +1,13 @@
 import type { ReactNode } from 'react';
-import type { FocusPlacement } from '../../layout/types';
+
+export type FocusLanePlacement = {
+  id: string;
+  score: number;
+  role: 'primary' | 'secondary' | 'tertiary';
+  sizePreset: 'S' | 'M' | 'L';
+  heightHint: number;
+  column: 'left' | 'right';
+};
 
 export default function FocusLane({
   placements,
@@ -7,8 +15,8 @@ export default function FocusLane({
   onReset,
   showReset
 }: {
-  placements: FocusPlacement[];
-  renderWidget: (id: FocusPlacement['id']) => ReactNode;
+  placements: FocusLanePlacement[];
+  renderWidget: (id: string) => ReactNode;
   onReset: () => void;
   showReset: boolean;
 }) {
@@ -27,14 +35,14 @@ export default function FocusLane({
         <div className="mx-auto grid w-full max-w-[1100px] min-h-full grid-cols-2 gap-3">
           <div className="space-y-3">
             {leftCol.map((placement) => (
-              <div key={placement.id} data-testid={`focus-placement-${placement.id}`}>
+              <div key={placement.id} data-testid={`focus-placement-${placement.id}`} className="transition-all duration-300 ease-out">
                 {renderWidget(placement.id)}
               </div>
             ))}
           </div>
           <div className="space-y-3">
             {rightCol.map((placement) => (
-              <div key={placement.id} data-testid={`focus-placement-${placement.id}`}>
+              <div key={placement.id} data-testid={`focus-placement-${placement.id}`} className="transition-all duration-300 ease-out">
                 {renderWidget(placement.id)}
               </div>
             ))}

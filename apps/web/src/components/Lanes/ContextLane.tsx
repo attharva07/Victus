@@ -1,7 +1,5 @@
 import type { ReactNode } from 'react';
-import type { WidgetId } from '../../layout/types';
-
-export default function ContextLane({ orderedIds, renderWidget }: { orderedIds: WidgetId[]; renderWidget: (id: WidgetId) => ReactNode }) {
+export default function ContextLane({ orderedIds, renderWidget }: { orderedIds: string[]; renderWidget: (id: string) => ReactNode }) {
   return (
     <aside className="h-full min-h-0 overflow-hidden rounded-2xl border border-borderSoft/60 bg-panel/30 p-3">
       <section data-testid="context-stack-container" className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-borderSoft/70 bg-panel/80 px-3 py-2">
