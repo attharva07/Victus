@@ -10,6 +10,18 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from victus.ui_state import (
+    DialogueSendRequest,
+    UIState,
+    WorkflowActionRequest,
+    approval_decision,
+    dialogue_send,
+    fetch_ui_state,
+    init_ui_state_db,
+    mark_reminder_done,
+    workflow_action,
+)
+
 from adapters.llm.provider import LLMProvider
 from core.camera.models import CameraStatus, CaptureResponse, RecognizeResponse
 from core.camera.service import CameraService
@@ -87,6 +99,7 @@ def create_app() -> FastAPI:
     ensure_directories()
     get_logger()
     app = FastAPI(title="Victus Local")
+    init_ui_state_db()
     llm_provider = LLMProvider()
     camera_service = CameraService()
     dist_dir = Path(__file__).resolve().parents[2] / "apps" / "web" / "dist"
@@ -94,6 +107,35 @@ def create_app() -> FastAPI:
     @app.get("/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
+
+
+    @app.get("/api/health")
+    def api_health() -> dict[str, str]:
+        return {"status": "ok"}
+
+    @app.get("/api/ui/state", response_model=UIState)
+    def api_ui_state() -> UIState:
+        return fetch_ui_state()
+
+    @app.post("/api/approvals/{approval_id}/approve", response_model=UIState)
+    def api_approval_approve(approval_id: str) -> UIState:
+        return approval_decision(approval_id, "approved")
+
+    @app.post("/api/approvals/{approval_id}/deny", response_model=UIState)
+    def api_approval_deny(approval_id: str) -> UIState:
+        return approval_decision(approval_id, "denied")
+
+    @app.post("/api/reminders/{reminder_id}/done", response_model=UIState)
+    def api_reminder_done(reminder_id: str) -> UIState:
+        return mark_reminder_done(reminder_id)
+
+    @app.post("/api/workflows/{workflow_id}/action", response_model=UIState)
+    def api_workflow_action(workflow_id: str, payload: WorkflowActionRequest) -> UIState:
+        return workflow_action(workflow_id, payload.action)
+
+    @app.post("/api/dialogue/send", response_model=UIState)
+    def api_dialogue_send(payload: DialogueSendRequest) -> UIState:
+        return dialogue_send(payload.message)
 
     @app.post("/login", response_model=LoginResponse)
     def login(payload: LoginRequest) -> LoginResponse:

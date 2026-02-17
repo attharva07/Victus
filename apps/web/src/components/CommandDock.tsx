@@ -6,7 +6,7 @@ export default function CommandDock({
   onTypingChange
 }: {
   alignToDialogue: boolean;
-  onSubmit: (value: string) => void;
+  onSubmit: (value: string) => void | Promise<void>;
   onInteract: () => void;
   onTypingChange: (typing: boolean) => void;
 }) {
@@ -57,7 +57,7 @@ export default function CommandDock({
   }, []);
 
   return (
-    <div data-testid="command-dock-shell" className="pointer-events-none fixed inset-x-0 z-40 px-4 bottom-[72px]">
+    <div data-testid="command-dock-shell" className="pointer-events-none fixed inset-x-0 bottom-[max(72px,calc(env(safe-area-inset-bottom)+72px))] z-50 px-4">
       <div
         data-testid="command-dock-pill"
         data-expanded={expanded ? 'true' : 'false'}
@@ -81,7 +81,7 @@ export default function CommandDock({
             if (event.key === 'Enter' && value.trim()) {
               event.preventDefault();
               const submitted = value.trim();
-              onSubmit(submitted);
+              void onSubmit(submitted);
               setValue('');
               onTypingChange(false);
               openDock();

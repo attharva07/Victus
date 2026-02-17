@@ -51,10 +51,10 @@ export function FailuresWidget({ items }: { items: FailureItem[] }) {
   );
 }
 
-export function WorkflowsWidget({ items, onResume }: { items: WorkflowItem[]; onResume?: (id: string) => void }) {
+export function WorkflowsWidget({ items, onResume, onPause, onAdvanceStep }: { items: WorkflowItem[]; onResume?: (id: string) => void; onPause?: (id: string) => void; onAdvanceStep?: (id: string) => void }) {
   return (
     <WidgetCard title={`Workflows (${items.length})`} canExpand={items.length > 2} testId="widget-workflows" scrollBody={false} className={items.length === 0 ? 'bg-panelSoft/50' : undefined}>
-      {items.length === 0 ? emptyState('Workflows') : <ul className="space-y-2 text-xs">{items.map((item) => <li key={item.id}><span>{item.title}</span>{onResume ? <button className="ml-2 text-[10px] text-cyan-300" onClick={() => onResume(item.id)}>resume</button> : null}</li>)}</ul>}
+      {items.length === 0 ? emptyState('Workflows') : <ul className="space-y-2 text-xs">{items.map((item) => <li key={item.id}><span>{item.title}</span>{onResume ? <button className="ml-2 text-[10px] text-cyan-300" onClick={() => onResume(item.id)}>resume</button> : null}{onPause ? <button className="ml-2 text-[10px] text-amber-300" onClick={() => onPause(item.id)}>pause</button> : null}{onAdvanceStep ? <button className="ml-2 text-[10px] text-violet-300" onClick={() => onAdvanceStep(item.id)}>advance</button> : null}</li>)}</ul>}
     </WidgetCard>
   );
 }

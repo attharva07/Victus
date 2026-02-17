@@ -1,68 +1,102 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { apiClient } from '../api/client';
+import type { UIEntity, UIStateResponse } from '../api/types';
 import type { AdaptiveItem } from '../engine/adaptiveScore';
 import { computeAdaptiveLayout, type PinState } from '../engine/layoutEngine';
 
 export type TimelineEvent = { id: string; label: string; detail: string; createdAt: number };
 
-const now = Date.now();
+const POLL_MS_DEFAULT = 300_000;
 
-const seedItems: AdaptiveItem[] = [
-  { id: 'failure-1', kind: 'failure', title: 'Orchestrator retry exhausted', detail: 'Last retry exceeded policy backoff window.', status: 'open', urgency: 90, confidenceImpact: -40, severity: 'critical', updatedAt: now - 2 * 60_000, actions: ['open'] },
-  { id: 'approval-1', kind: 'approval', title: 'Filesystem tool scope adjustment', detail: 'Grant wider read/write scope for migration script.', status: 'pending', urgency: 74, confidenceImpact: -10, updatedAt: now - 5 * 60_000, actions: ['approve', 'deny'] },
-  { id: 'alert-1', kind: 'alert', title: 'Memory latency drift', detail: '95th percentile latency is up 12%.', status: 'open', urgency: 67, confidenceImpact: -18, severity: 'warning', updatedAt: now - 15 * 60_000, actions: ['open'] },
-  { id: 'reminder-1', kind: 'reminder', title: 'Approve onboarding policy edits', detail: 'Due today 2:00 PM', status: 'pending', urgency: 82, confidenceImpact: -8, updatedAt: now - 12 * 60_000, actions: ['done'] },
-  { id: 'workflow-1', kind: 'workflow', title: 'Weekly planning synthesis', detail: 'Step 3/5 · 60%', status: 'paused', urgency: 63, confidenceImpact: 20, updatedAt: now - 40 * 60_000, actions: ['resume'] },
-  { id: 'dialogue-1', kind: 'dialogue', title: 'Dialogue', detail: 'Victus is active. Issue a command when ready.', status: 'active', urgency: 45, confidenceImpact: 18, updatedAt: now - 1 * 60_000, actions: ['open'] },
-  { id: 'timeline-stream', kind: 'timeline', title: 'Timeline', detail: 'Truth stream of system + operator actions.', status: 'active', urgency: 50, confidenceImpact: 12, updatedAt: now - 1 * 60_000, actions: ['open'] }
-];
+const toAdaptiveItem = (kind: AdaptiveItem['kind'], item: UIEntity): AdaptiveItem => ({
+  id: item.id,
+  kind,
+  title: item.title,
+  detail: item.detail,
+  status: item.status,
+  urgency: item.urgency,
+  confidenceImpact: kind === 'workflow' ? 20 : kind === 'failure' ? -35 : -10,
+  severity: item.severity,
+  updatedAt: item.updated_at,
+  actions:
+    kind === 'approval'
+      ? ['approve', 'deny']
+      : kind === 'reminder'
+        ? ['done']
+        : kind === 'workflow'
+          ? ['resume', 'open']
+          : ['open']
+});
 
-const seedTimeline: TimelineEvent[] = [
-  { id: 't1', label: 'Executor heartbeat stable', detail: 'Automation channels nominal.', createdAt: now - 30 * 60_000 },
-  { id: 't2', label: 'Team planning sync', detail: 'Agenda locked for tomorrow.', createdAt: now - 20 * 60_000 },
-  { id: 't3', label: 'Inbox triage complete', detail: '12 items processed.', createdAt: now - 45 * 60_000 }
-];
-
-function makeEvent(label: string, detail: string): TimelineEvent {
-  return { id: `timeline-${Date.now()}-${Math.random().toString(16).slice(2)}`, label, detail, createdAt: Date.now() };
+function stateToItems(state: UIStateResponse): AdaptiveItem[] {
+  return [
+    ...state.failures.map((item) => toAdaptiveItem('failure', item)),
+    ...state.approvals.map((item) => toAdaptiveItem('approval', item)),
+    ...state.alerts.map((item) => toAdaptiveItem('alert', item)),
+    ...state.reminders.map((item) => toAdaptiveItem('reminder', item)),
+    ...state.workflows.map((item) => toAdaptiveItem('workflow', item)),
+    {
+      id: 'dialogue-root',
+      kind: 'dialogue',
+      title: 'Dialogue',
+      detail: state.dialogue_messages.at(-1)?.text ?? 'Victus is active.',
+      status: 'active',
+      urgency: 45,
+      confidenceImpact: 18,
+      updatedAt: state.dialogue_messages.at(-1)?.created_at ?? Date.now(),
+      actions: ['open']
+    },
+    {
+      id: 'timeline-stream',
+      kind: 'timeline',
+      title: 'Timeline',
+      detail: 'Truth stream of system + operator actions.',
+      status: 'active',
+      urgency: 50,
+      confidenceImpact: 12,
+      updatedAt: state.timeline_events[0]?.created_at ?? Date.now(),
+      actions: ['open']
+    }
+  ];
 }
 
-export function useUIState() {
-  const [items, setItems] = useState<AdaptiveItem[]>(seedItems);
-  const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>(seedTimeline);
+export function useUIState(pollMs = POLL_MS_DEFAULT) {
+  const [apiState, setApiState] = useState<UIStateResponse | null>(null);
   const [pinState, setPinState] = useState<PinState>({});
+
+  const refresh = useCallback(async () => {
+    const next = await apiClient.getUIState();
+    setApiState(next);
+    return next;
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  useEffect(() => {
+    const handle = window.setInterval(() => {
+      void refresh();
+    }, pollMs);
+    return () => window.clearInterval(handle);
+  }, [pollMs, refresh]);
+
+  const items = useMemo(() => (apiState ? stateToItems(apiState) : []), [apiState]);
+  const timelineEvents = useMemo<TimelineEvent[]>(
+    () => (apiState?.timeline_events ?? []).map((event) => ({ id: event.id, label: event.label, detail: event.detail, createdAt: event.created_at })),
+    [apiState]
+  );
 
   const layout = useMemo(() => computeAdaptiveLayout(items, pinState), [items, pinState]);
 
-  const addTimeline = (label: string, detail: string) => {
-    setTimelineEvents((prev) => [makeEvent(label, detail), ...prev]);
-    setItems((prev) => prev.map((item) => (item.kind === 'timeline' ? { ...item, updatedAt: Date.now() } : item)));
-  };
-
-  const touchItem = (id: string, mutate?: (item: AdaptiveItem) => AdaptiveItem) => {
-    setItems((prev) => prev.map((item) => (item.id === id ? mutate?.({ ...item, updatedAt: Date.now() }) ?? { ...item, updatedAt: Date.now() } : item)));
-  };
-
   const actions = {
-    approve: (id: string) => {
-      const target = items.find((item) => item.id === id);
-      setItems((prev) => prev.filter((item) => item.id !== id));
-      if (target) addTimeline(`Approval resolved: ${target.title} (approved)`, 'Approval approved by operator.');
-    },
-    deny: (id: string) => {
-      const target = items.find((item) => item.id === id);
-      setItems((prev) => prev.filter((item) => item.id !== id));
-      if (target) addTimeline(`Approval resolved: ${target.title} (denied)`, 'Approval denied by operator.');
-    },
-    done: (id: string) => {
-      const target = items.find((item) => item.id === id);
-      setItems((prev) => prev.filter((item) => item.id !== id));
-      if (target) addTimeline(`Done: ${target.title}`, 'Item marked done and removed from adaptive lanes.');
-    },
-    resume: (id: string) => {
-      touchItem(id, (item) => ({ ...item, status: 'active', urgency: Math.min(100, item.urgency + 10), detail: 'Resumed · step advanced' }));
-      const target = items.find((item) => item.id === id);
-      if (target) addTimeline(`Workflow resumed: ${target.title}`, 'Workflow status changed to active.');
-    },
+    approve: async (id: string) => setApiState(await apiClient.approve(id)),
+    deny: async (id: string) => setApiState(await apiClient.deny(id)),
+    done: async (id: string) => setApiState(await apiClient.markReminderDone(id)),
+    resume: async (id: string) => setApiState(await apiClient.workflowAction(id, 'resume')),
+    pause: async (id: string) => setApiState(await apiClient.workflowAction(id, 'pause')),
+    advanceStep: async (id: string) => setApiState(await apiClient.workflowAction(id, 'advance_step')),
+    sendCommand: async (message: string) => setApiState(await apiClient.sendDialogue(message)),
     togglePin: (id: string) => {
       setPinState((prev) => {
         if (prev[id]) {
@@ -75,12 +109,15 @@ export function useUIState() {
         if (focusIndex >= 0) return { ...prev, [id]: { lane: 'focus', order: focusIndex } };
         return { ...prev, [id]: { lane: 'context', order: Math.max(0, contextIndex) } };
       });
-    }
+    },
+    refresh
   };
 
   return {
     items,
     timelineEvents,
+    dialogueMessages: apiState?.dialogue_messages ?? [],
+    workflows: apiState?.workflows ?? [],
     layout,
     pinState,
     actions

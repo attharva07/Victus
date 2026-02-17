@@ -40,3 +40,16 @@ victus_local/app_aliases.json
 # Tooling
 .idea/
 .vscode/
+
+# Victus local runtime state (never commit personal/local data)
+*.sqlite3
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+victus_data/
+Victus/
+VictusAI/
+.runtime/
+runtime/
+node_modules/
