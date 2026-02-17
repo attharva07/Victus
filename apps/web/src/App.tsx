@@ -19,7 +19,7 @@ function byKind(items: AdaptiveItem[], kind: AdaptiveItem['kind']) {
 
 export default function App() {
   const [activeView, setActiveView] = useState<VictusView>('overview');
-  const { items, timelineEvents, layout, pinState, actions } = useUIState();
+  const { items, timelineEvents, dialogueMessages, workflows, layout, pinState, actions } = useUIState();
 
   const grouped = useMemo(
     () => ({
@@ -35,10 +35,10 @@ export default function App() {
 
   const renderContextWidget = (kindId: string) => {
     if (kindId === 'failure') return <FailuresWidget items={grouped.failures.map((i) => ({ id: i.id, title: i.title, severity: i.severity ?? 'info', ageMinutes: 0 }))} />;
-    if (kindId === 'approval') return <ApprovalsWidget items={grouped.approvals.map((i) => ({ id: i.id, title: i.title, detail: i.detail, requestedBy: 'Operator' }))} onApprove={actions.approve} onDeny={actions.deny} />;
+    if (kindId === 'approval') return <ApprovalsWidget items={grouped.approvals.map((i) => ({ id: i.id, title: i.title, detail: i.detail, requestedBy: 'Operator' }))} onApprove={(id) => void actions.approve(id)} onDeny={(id) => void actions.deny(id)} />;
     if (kindId === 'alert') return <AlertsWidget items={grouped.alerts.map((i) => ({ id: i.id, title: i.title, detail: i.detail }))} />;
-    if (kindId === 'reminder') return <RemindersWidget items={grouped.reminders.map((i) => ({ id: i.id, title: i.title, due: i.detail, urgency: 'high' }))} onDone={actions.done} />;
-    if (kindId === 'workflow') return <WorkflowsWidget items={grouped.workflows.map((i) => ({ id: i.id, title: i.title, progress: 60, stepLabel: i.status, resumable: true }))} onResume={actions.resume} />;
+    if (kindId === 'reminder') return <RemindersWidget items={grouped.reminders.map((i) => ({ id: i.id, title: i.title, due: i.detail, urgency: 'high' }))} onDone={(id) => void actions.done(id)} />;
+    if (kindId === 'workflow') return <WorkflowsWidget items={grouped.workflows.map((i) => ({ id: i.id, title: i.title, progress: workflows.find((w) => w.id === i.id)?.progress ?? 0, stepLabel: i.detail, resumable: true }))} onResume={(id) => void actions.resume(id)} onPause={(id) => void actions.pause(id)} onAdvanceStep={(id) => void actions.advanceStep(id)} />;
     return null;
   };
 
@@ -59,15 +59,21 @@ export default function App() {
     if (!item) return null;
 
     if (item.kind === 'dialogue') {
-      return <DialogueWidget messages={[{ id: item.id, role: 'system', text: item.detail, createdAt: item.updatedAt }]} pinned={pinned} onTogglePin={() => actions.togglePin(item.id)} />;
+      return (
+        <DialogueWidget
+          messages={dialogueMessages.map((message) => ({ id: message.id, role: message.role, text: message.text, createdAt: message.created_at }))}
+          pinned={pinned}
+          onTogglePin={() => actions.togglePin(item.id)}
+        />
+      );
     }
 
     return (
       <div className="transition-all duration-300 ease-out">
         {item.kind === 'failure' ? <FailuresWidget items={[{ id: item.id, title: item.title, severity: item.severity ?? 'critical', ageMinutes: 0 }]} /> : null}
-        {item.kind === 'approval' ? <ApprovalsWidget items={[{ id: item.id, title: item.title, detail: item.detail, requestedBy: 'Operator' }]} onApprove={actions.approve} onDeny={actions.deny} /> : null}
-        {item.kind === 'reminder' ? <RemindersWidget items={[{ id: item.id, title: item.title, due: item.detail, urgency: 'high' }]} onDone={actions.done} /> : null}
-        {item.kind === 'workflow' ? <WorkflowsWidget items={[{ id: item.id, title: item.title, progress: 60, stepLabel: item.status, resumable: true }]} onResume={actions.resume} /> : null}
+        {item.kind === 'approval' ? <ApprovalsWidget items={[{ id: item.id, title: item.title, detail: item.detail, requestedBy: 'Operator' }]} onApprove={(next) => void actions.approve(next)} onDeny={(next) => void actions.deny(next)} /> : null}
+        {item.kind === 'reminder' ? <RemindersWidget items={[{ id: item.id, title: item.title, due: item.detail, urgency: 'high' }]} onDone={(next) => void actions.done(next)} /> : null}
+        {item.kind === 'workflow' ? <WorkflowsWidget items={[{ id: item.id, title: item.title, progress: workflows.find((w) => w.id === item.id)?.progress ?? 0, stepLabel: item.detail, resumable: true }]} onResume={(next) => void actions.resume(next)} onPause={(next) => void actions.pause(next)} onAdvanceStep={(next) => void actions.advanceStep(next)} /> : null}
       </div>
     );
   };
@@ -97,20 +103,8 @@ export default function App() {
         </main>
       </div>
 
-      <CommandDock
-        alignToDialogue={true}
-        onInteract={() => undefined}
-        onTypingChange={() => undefined}
-        onSubmit={async () => undefined}
-      />
-      <BottomStatusStrip
-        mode={'adaptive'}
-        planner={'active'}
-        executor={'ready'}
-        domain={'automation'}
-        confidence={'stable (78)'}
-        onSimulate={() => undefined}
-      />
+      <CommandDock alignToDialogue={true} onInteract={() => undefined} onTypingChange={() => undefined} onSubmit={(value) => void actions.sendCommand(value)} />
+      <BottomStatusStrip mode={'adaptive'} planner={'active'} executor={'ready'} domain={'automation'} confidence={'stable (78)'} onSimulate={() => undefined} />
     </div>
   );
 }
