@@ -113,6 +113,8 @@ export default function CommandDock({
           placeholder="Issue a command…"
           className="w-full border-0 bg-transparent text-sm text-slate-100 outline-none placeholder:text-slate-500"
         />
+
+        <p className="mt-2 px-1 text-[11px] text-slate-500">Try: add reminder … / list recent memories / finance list …</p>
       </div>
     </div>
   );

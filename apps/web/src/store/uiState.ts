@@ -1,11 +1,27 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiClient } from '../api/client';
-import type { DialogueMessage, UIEntity, UIStateResponse } from '../api/types';
+import type { DialogueMessage as ApiDialogueMessage, UIEntity, UIStateResponse } from '../api/types';
 import type { AdaptiveItem } from '../engine/adaptiveScore';
 import { computeAdaptiveLayout, type PinState } from '../engine/layoutEngine';
-import { ApiError, orchestrate } from '../lib/api';
+import { ApiError, orchestrateCommand } from '../lib/api';
 
 export type TimelineEvent = { id: string; label: string; detail: string; createdAt: number };
+
+export type CommandDialogueMessage = {
+  id: string;
+  role: 'user' | 'system';
+  text: string;
+  created_at: number;
+  fields?: string[];
+  candidates?: string[];
+};
+
+type ClarifyPayload = {
+  error: 'clarify';
+  message?: unknown;
+  fields?: unknown;
+  candidates?: unknown;
+};
 
 const POLL_MS_DEFAULT = 300_000;
 
@@ -63,22 +79,49 @@ function stateToItems(state: UIStateResponse): AdaptiveItem[] {
   ];
 }
 
+function toStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
+}
+
+function asObject(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === 'object' ? (value as Record<string, unknown>) : null;
+}
+
+function nextLocalMessage(role: CommandDialogueMessage['role'], text: string, extras: Partial<CommandDialogueMessage> = {}): CommandDialogueMessage {
+  const now = Date.now();
+  return {
+    id: `local-${role}-${now}-${Math.random().toString(36).slice(2, 8)}`,
+    role,
+    text,
+    created_at: now,
+    ...extras
+  };
+}
+
+function toCommandDialogue(message: ApiDialogueMessage): CommandDialogueMessage {
+  return {
+    id: message.id,
+    role: message.role,
+    text: message.text,
+    created_at: message.created_at
+  };
+}
+
 export function useUIState(enabled = true, pollMs = POLL_MS_DEFAULT) {
   const [apiState, setApiState] = useState<UIStateResponse | null>(null);
-  const [localDialogueMessages, setLocalDialogueMessages] = useState<DialogueMessage[]>([]);
+  const [localDialogueMessages, setLocalDialogueMessages] = useState<CommandDialogueMessage[]>([]);
   const [pinState, setPinState] = useState<PinState>({});
+  const [pendingClarification, setPendingClarification] = useState<{
+    fields: string[];
+    candidates: string[];
+  } | null>(null);
 
-  const appendDialogueMessage = useCallback((role: DialogueMessage['role'], text: string) => {
-    const now = Date.now();
-    setLocalDialogueMessages((prev) => [
-      ...prev,
-      {
-        id: `local-${role}-${now}-${Math.random().toString(36).slice(2, 8)}`,
-        role,
-        text,
-        created_at: now
-      }
-    ]);
+  const appendDialogueMessage = useCallback((role: CommandDialogueMessage['role'], text: string, extras: Partial<CommandDialogueMessage> = {}) => {
+    setLocalDialogueMessages((prev) => [...prev, nextLocalMessage(role, text, extras)]);
   }, []);
 
   const refresh = useCallback(async () => {
@@ -108,7 +151,7 @@ export function useUIState(enabled = true, pollMs = POLL_MS_DEFAULT) {
 
   const items = useMemo(() => (apiState ? stateToItems(apiState) : []), [apiState]);
   const dialogueMessages = useMemo(
-    () => [...(apiState?.dialogue_messages ?? []), ...localDialogueMessages],
+    () => [...(apiState?.dialogue_messages ?? []).map(toCommandDialogue), ...localDialogueMessages],
     [apiState?.dialogue_messages, localDialogueMessages]
   );
   const timelineEvents = useMemo<TimelineEvent[]>(
@@ -129,19 +172,53 @@ export function useUIState(enabled = true, pollMs = POLL_MS_DEFAULT) {
       appendDialogueMessage('user', message);
 
       try {
-        const response = await orchestrate(message);
-        appendDialogueMessage('system', JSON.stringify(response, null, 2));
+        const response = await orchestrateCommand(message);
+
+        if (typeof response === 'string') {
+          setPendingClarification(null);
+          appendDialogueMessage('system', response);
+          return;
+        }
+
+        const payload = asObject(response);
+        if (!payload) {
+          setPendingClarification(null);
+          appendDialogueMessage('system', String(response));
+          return;
+        }
+
+        if (payload.error === 'clarify') {
+          const clarifyPayload = payload as ClarifyPayload;
+          const messageText = typeof clarifyPayload.message === 'string' ? clarifyPayload.message : 'Can you clarify what you want Victus to do?';
+          const fields = toStringArray(clarifyPayload.fields);
+          const candidates = toStringArray(clarifyPayload.candidates);
+
+          setPendingClarification({ fields, candidates });
+          appendDialogueMessage('system', messageText, { fields, candidates });
+          return;
+        }
+
+        setPendingClarification(null);
+        appendDialogueMessage('system', JSON.stringify(payload, null, 2));
       } catch (error) {
+        setPendingClarification(null);
+
         if (error instanceof ApiError) {
           appendDialogueMessage(
             'system',
-            `Request failed (${error.status}) ${error.method} ${error.path}: ${error.bodyExcerpt}`
+            `Request failed\nmethod: ${error.method}\nurl: ${error.url}\nstatus: ${error.status}\nresponse: ${error.bodyExcerpt}`
           );
           return;
         }
 
         appendDialogueMessage('system', `Request error: ${error instanceof Error ? error.message : String(error)}`);
       }
+    },
+    useClarificationCandidate: async (candidate: string) => {
+      if (!candidate.trim()) {
+        return;
+      }
+      await actions.sendCommand(candidate.trim());
     },
     togglePin: (id: string) => {
       setPinState((prev) => {
@@ -166,6 +243,7 @@ export function useUIState(enabled = true, pollMs = POLL_MS_DEFAULT) {
     workflows: apiState?.workflows ?? [],
     layout,
     pinState,
+    pendingClarification,
     actions
   };
 }
