@@ -63,7 +63,7 @@ function stateToItems(state: UIStateResponse): AdaptiveItem[] {
   ];
 }
 
-export function useUIState(pollMs = POLL_MS_DEFAULT) {
+export function useUIState(enabled = true, pollMs = POLL_MS_DEFAULT) {
   const [apiState, setApiState] = useState<UIStateResponse | null>(null);
   const [localDialogueMessages, setLocalDialogueMessages] = useState<DialogueMessage[]>([]);
   const [pinState, setPinState] = useState<PinState>({});
@@ -88,15 +88,23 @@ export function useUIState(pollMs = POLL_MS_DEFAULT) {
   }, []);
 
   useEffect(() => {
+    if (!enabled) {
+      return;
+    }
+
     void refresh();
-  }, [refresh]);
+  }, [enabled, refresh]);
 
   useEffect(() => {
+    if (!enabled) {
+      return;
+    }
+
     const handle = window.setInterval(() => {
       void refresh();
     }, pollMs);
     return () => window.clearInterval(handle);
-  }, [pollMs, refresh]);
+  }, [enabled, pollMs, refresh]);
 
   const items = useMemo(() => (apiState ? stateToItems(apiState) : []), [apiState]);
   const dialogueMessages = useMemo(
