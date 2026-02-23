@@ -52,7 +52,7 @@ export default function App() {
   const [cameraData, setCameraData] = useState<unknown | null>(null);
   const [viewErrors, setViewErrors] = useState<Partial<Record<VictusView, string>>>({});
 
-  const { items, timelineEvents, dialogueMessages, workflows, layout, pinState, actions } = useUIState();
+  const { items, timelineEvents, dialogueMessages, workflows, layout, pinState, actions } = useUIState(authReady);
 
   useEffect(() => {
     const checkBootstrap = async () => {
@@ -208,30 +208,30 @@ export default function App() {
   return (
     <div className="h-screen overflow-hidden bg-bg text-slate-200">
       <div className="px-4 pt-3 text-xs text-slate-400">{statusMessage || 'Checking backend status…'}</div>
-      {bootstrapped === false ? (
-        <form onSubmit={onBootstrapInit} className="mx-4 mt-2 flex items-center gap-2 rounded-lg border border-borderSoft/70 bg-panel p-3 text-xs">
-          <span className="text-slate-300">Initialize bootstrap:</span>
-          <input aria-label="Bootstrap username" value={username} onChange={(event) => setUsername(event.target.value)} className="rounded border border-borderSoft/70 bg-panelSoft/70 px-2 py-1 text-slate-100" />
-          <input aria-label="Bootstrap password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} className="rounded border border-borderSoft/70 bg-panelSoft/70 px-2 py-1 text-slate-100" />
-          <button disabled={loading} className="rounded border border-cyan-500/50 px-2 py-1 text-cyan-200">{loading ? 'Working…' : 'Init'}</button>
-        </form>
-      ) : null}
-      {bootstrapped && !authReady ? (
-        <form onSubmit={onLogin} className="mx-4 mt-2 flex items-center gap-2 rounded-lg border border-borderSoft/70 bg-panel p-3 text-xs">
-          <span className="text-slate-300">Login required:</span>
-          <input aria-label="Login username" value={username} onChange={(event) => setUsername(event.target.value)} className="rounded border border-borderSoft/70 bg-panelSoft/70 px-2 py-1 text-slate-100" />
-          <input aria-label="Login password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} className="rounded border border-borderSoft/70 bg-panelSoft/70 px-2 py-1 text-slate-100" />
-          <button disabled={loading} className="rounded border border-cyan-500/50 px-2 py-1 text-cyan-200">{loading ? 'Working…' : 'Login'}</button>
-          <button type="button" onClick={() => { setToken(null); setAuthReady(false); }} className="rounded border border-borderSoft/70 px-2 py-1 text-slate-300">Clear token</button>
-        </form>
-      ) : null}
-
       <div className="grid h-full min-h-0 grid-cols-[64px_minmax(0,1fr)] gap-4 px-3 pb-28 pt-3">
         <LeftRail activeView={activeView} onChangeView={setActiveView} />
         <main className="h-full min-h-0 overflow-hidden pb-20">
           {activeView === 'overview' ? (
             <div className="grid h-full min-h-0 grid-cols-[minmax(0,1fr)_320px] gap-4">
               <section className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)] gap-3">
+                {bootstrapped === false ? (
+                  <form onSubmit={onBootstrapInit} className="flex flex-wrap items-center gap-2 rounded-lg border border-borderSoft/70 bg-panel p-3 text-xs">
+                    <span className="text-slate-300">Initialize bootstrap:</span>
+                    <input aria-label="Bootstrap username" value={username} onChange={(event) => setUsername(event.target.value)} className="rounded border border-borderSoft/70 bg-panelSoft/70 px-2 py-1 text-slate-100" />
+                    <input aria-label="Bootstrap password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} className="rounded border border-borderSoft/70 bg-panelSoft/70 px-2 py-1 text-slate-100" />
+                    <button disabled={loading} className="rounded border border-cyan-500/50 px-2 py-1 text-cyan-200">{loading ? 'Working…' : 'Init'}</button>
+                  </form>
+                ) : null}
+                {bootstrapped && !authReady ? (
+                  <form onSubmit={onLogin} className="flex flex-wrap items-center gap-2 rounded-lg border border-borderSoft/70 bg-panel p-3 text-xs">
+                    <span className="text-slate-300">Login required:</span>
+                    <input aria-label="Login username" value={username} onChange={(event) => setUsername(event.target.value)} className="rounded border border-borderSoft/70 bg-panelSoft/70 px-2 py-1 text-slate-100" />
+                    <input aria-label="Login password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} className="rounded border border-borderSoft/70 bg-panelSoft/70 px-2 py-1 text-slate-100" />
+                    <button disabled={loading} className="rounded border border-cyan-500/50 px-2 py-1 text-cyan-200">{loading ? 'Working…' : 'Login'}</button>
+                    <button type="button" onClick={() => { setToken(null); setAuthReady(false); }} className="rounded border border-borderSoft/70 px-2 py-1 text-slate-300">Clear token</button>
+                  </form>
+                ) : null}
+
                 <TimelineWidget
                   events={timelineEvents.map((event) => ({ ...event, bucket: 'Today' as const }))}
                   pinned={Boolean(pinState['timeline-stream'])}

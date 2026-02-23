@@ -1,5 +1,6 @@
 const TOKEN_STORAGE_KEY = 'victus_token';
 const MAX_ERROR_EXCERPT_CHARS = 400;
+const API_BASE_URL = (import.meta.env.VITE_API_URL ?? '').trim();
 
 let tokenCache: string | null = null;
 
@@ -34,17 +35,35 @@ function shorten(text: string): string {
   return text.length > MAX_ERROR_EXCERPT_CHARS ? `${text.slice(0, MAX_ERROR_EXCERPT_CHARS)}...(truncated)` : text;
 }
 
-async function parseJsonResponse<T>(response: Response): Promise<T> {
-  const text = await response.text();
-  if (!text.trim()) {
-    return {} as T;
-  }
-  return JSON.parse(text) as T;
+function isJsonContentType(contentType: string | null): boolean {
+  return Boolean(contentType && contentType.toLowerCase().includes('application/json'));
 }
 
-export function getApiBase(): string {
-  const configured = (import.meta.env.VITE_API_URL ?? '').trim();
-  return configured ? configured.replace(/\/$/, '') : '';
+function hasHttpProtocol(path: string): boolean {
+  return /^https?:\/\//i.test(path);
+}
+
+function buildRequestUrl(path: string): string {
+  if (!API_BASE_URL || hasHttpProtocol(path)) {
+    return path;
+  }
+
+  const normalizedBase = API_BASE_URL.endsWith('/') ? API_BASE_URL.slice(0, -1) : API_BASE_URL;
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  return `${normalizedBase}${normalizedPath}`;
+}
+
+export async function parseApiBody<T = unknown>(response: Response): Promise<T> {
+  const text = await response.text();
+  if (!text.trim()) {
+    return '' as T;
+  }
+
+  if (isJsonContentType(response.headers.get('content-type'))) {
+    return JSON.parse(text) as T;
+  }
+
+  return text as T;
 }
 
 export function getToken(): string | null {
@@ -75,22 +94,21 @@ export function setToken(token: string | null): void {
   window.localStorage.removeItem(TOKEN_STORAGE_KEY);
 }
 
-export async function apiFetch(path: string, opts: RequestInit = {}): Promise<Response> {
-  const base = getApiBase();
-  const url = `${base}${path}`;
+export async function apiFetch<T = unknown>(path: string, opts: RequestInit = {}): Promise<T> {
   const headers = new Headers(opts.headers ?? {});
   const method = (opts.method ?? 'GET').toUpperCase();
+  const requestUrl = buildRequestUrl(path);
 
   if (opts.body && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }
 
   const token = getToken();
-  if (token && !headers.has('Authorization')) {
+  if (path !== '/login' && token && !headers.has('Authorization')) {
     headers.set('Authorization', `Bearer ${token}`);
   }
 
-  const response = await fetch(url, { ...opts, headers });
+  const response = await fetch(requestUrl, { ...opts, headers });
 
   if (!response.ok) {
     const contentType = response.headers.get('content-type');
@@ -111,49 +129,58 @@ export async function apiFetch(path: string, opts: RequestInit = {}): Promise<Re
     });
   }
 
-  return response;
+  return parseApiBody<T>(response);
 }
 
 export async function login(username: string, password: string): Promise<string> {
-  const response = await apiFetch('/login', {
+  const data = await apiFetch<{ access_token?: string }>('/login', {
     method: 'POST',
     body: JSON.stringify({ username, password })
   });
-  const data = await parseJsonResponse<{ access_token?: string }>(response);
+
   const token = data.access_token?.trim();
   if (!token) {
     throw new ApiError({
       message: 'POST /login succeeded but response did not include access_token.',
-      status: response.status,
-      contentType: response.headers.get('content-type'),
+      status: 200,
+      contentType: 'application/json',
       bodyExcerpt: '<missing access_token>',
       path: '/login',
       method: 'POST'
     });
   }
+
   setToken(token);
   return token;
 }
 
 export async function bootstrapStatus(): Promise<{ bootstrapped: boolean }> {
-  const response = await apiFetch('/bootstrap/status');
-  return parseJsonResponse<{ bootstrapped: boolean }>(response);
+  return apiFetch<{ bootstrapped: boolean }>('/bootstrap/status');
 }
 
 export async function bootstrapInit(username: string, password: string): Promise<{ ok: boolean; bootstrapped: boolean }> {
-  const response = await apiFetch('/bootstrap/init', {
+  return apiFetch<{ ok: boolean; bootstrapped: boolean }>('/bootstrap/init', {
     method: 'POST',
     body: JSON.stringify({ username, password })
   });
-  return parseJsonResponse<{ ok: boolean; bootstrapped: boolean }>(response);
 }
 
+const useMocks = import.meta.env.VITE_USE_MOCKS === 'true';
+
 export async function orchestrate(text: string): Promise<unknown> {
-  const response = await apiFetch('/orchestrate', {
+  if (useMocks) {
+    return {
+      ok: true,
+      mode: 'local',
+      message: 'Acknowledged. Command received in local mode.',
+      text
+    };
+  }
+
+  return apiFetch<unknown>('/orchestrate', {
     method: 'POST',
     body: JSON.stringify({ text })
   });
-  return parseJsonResponse<unknown>(response);
 }
 
 export async function validateStoredToken(): Promise<boolean> {
@@ -174,26 +201,21 @@ export async function validateStoredToken(): Promise<boolean> {
 }
 
 export async function memoriesSearch(q: string, limit = 20): Promise<{ results: unknown[] }> {
-  const response = await apiFetch(`/memory/search?q=${encodeURIComponent(q)}&limit=${limit}`);
-  return parseJsonResponse<{ results: unknown[] }>(response);
+  return apiFetch<{ results: unknown[] }>(`/memory/search?q=${encodeURIComponent(q)}&limit=${limit}`);
 }
 
 export async function memoriesList(limit = 20): Promise<{ results: unknown[] }> {
-  const response = await apiFetch(`/memory/list?limit=${limit}`);
-  return parseJsonResponse<{ results: unknown[] }>(response);
+  return apiFetch<{ results: unknown[] }>(`/memory/list?limit=${limit}`);
 }
 
 export async function financeSummary(period = 'week'): Promise<{ report: unknown }> {
-  const response = await apiFetch(`/finance/summary?period=${encodeURIComponent(period)}`);
-  return parseJsonResponse<{ report: unknown }>(response);
+  return apiFetch<{ report: unknown }>(`/finance/summary?period=${encodeURIComponent(period)}`);
 }
 
 export async function filesList(): Promise<{ files: string[] }> {
-  const response = await apiFetch('/files/list');
-  return parseJsonResponse<{ files: string[] }>(response);
+  return apiFetch<{ files: string[] }>('/files/list');
 }
 
 export async function cameraStatus(): Promise<unknown> {
-  const response = await apiFetch('/camera/status');
-  return parseJsonResponse<unknown>(response);
+  return apiFetch<unknown>('/camera/status');
 }
