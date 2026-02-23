@@ -17,6 +17,26 @@ export default defineConfig({
         target: 'http://127.0.0.1:8000',
         changeOrigin: true
       },
+      '/memory': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true
+      },
+      '/finance': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true
+      },
+      '/files': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true
+      },
+      '/camera': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true
+      },
+      '/me': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true
+      },
       '/api': {
         target: 'http://127.0.0.1:8000',
         changeOrigin: true

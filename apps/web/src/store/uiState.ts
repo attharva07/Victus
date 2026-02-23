@@ -3,7 +3,7 @@ import { apiClient } from '../api/client';
 import type { DialogueMessage, UIEntity, UIStateResponse } from '../api/types';
 import type { AdaptiveItem } from '../engine/adaptiveScore';
 import { computeAdaptiveLayout, type PinState } from '../engine/layoutEngine';
-import { apiFetch, getToken, setToken } from '../lib/api';
+import { ApiError, orchestrate } from '../lib/api';
 
 export type TimelineEvent = { id: string; label: string; detail: string; createdAt: number };
 
@@ -121,52 +121,17 @@ export function useUIState(pollMs = POLL_MS_DEFAULT) {
       appendDialogueMessage('user', message);
 
       try {
-        let token = getToken();
-        if (!token) {
-          const username = (import.meta.env.VITE_TEST_USERNAME ?? 'admin').trim() || 'admin';
-          const password = (import.meta.env.VITE_TEST_PASSWORD ?? 'admin123').trim() || 'admin123';
-          const loginResponse = await apiFetch('/login', {
-            method: 'POST',
-            body: JSON.stringify({ username, password })
-          });
-          const loginText = await loginResponse.text();
-          if (!loginResponse.ok) {
-            appendDialogueMessage('system', `Login failed (${loginResponse.status}): ${loginText.slice(0, 300)}`);
-            return;
-          }
-
-          const loginData = loginText ? (JSON.parse(loginText) as { access_token?: string }) : {};
-          token = loginData.access_token ?? null;
-          if (!token) {
-            appendDialogueMessage('system', 'Login failed: response missing access_token.');
-            return;
-          }
-          setToken(token);
-        }
-
-        const orchestrateResponse = await apiFetch('/orchestrate', {
-          method: 'POST',
-          body: JSON.stringify({ text: message })
-        });
-        const responseText = await orchestrateResponse.text();
-
-        if (!orchestrateResponse.ok) {
-          appendDialogueMessage('system', `Orchestrate failed (${orchestrateResponse.status}): ${responseText.slice(0, 300)}`);
-          return;
-        }
-
-        if (!responseText.trim()) {
-          appendDialogueMessage('system', 'Orchestrate request completed with an empty response.');
-          return;
-        }
-
-        try {
-          const parsed = JSON.parse(responseText);
-          appendDialogueMessage('system', JSON.stringify(parsed, null, 2));
-        } catch {
-          appendDialogueMessage('system', responseText);
-        }
+        const response = await orchestrate(message);
+        appendDialogueMessage('system', JSON.stringify(response, null, 2));
       } catch (error) {
+        if (error instanceof ApiError) {
+          appendDialogueMessage(
+            'system',
+            `Request failed (${error.status}) ${error.method} ${error.path}: ${error.bodyExcerpt}`
+          );
+          return;
+        }
+
         appendDialogueMessage('system', `Request error: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
