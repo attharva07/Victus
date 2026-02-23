@@ -6,6 +6,7 @@ from pathlib import Path
 
 import bcrypt
 from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request, status
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -99,6 +100,13 @@ def create_app() -> FastAPI:
     ensure_directories()
     get_logger()
     app = FastAPI(title="Victus Local")
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
     init_ui_state_db()
     llm_provider = LLMProvider()
     camera_service = CameraService()

@@ -4,6 +4,8 @@
 
 During development, the UI runs on `http://127.0.0.1:5173` and the API runs on `http://127.0.0.1:8000`.
 
+The FastAPI app enables CORS for `http://127.0.0.1:5173` and `http://localhost:5173` so the dev UI can call backend endpoints on port `8000` directly from the browser.
+
 Frontend requests use **relative paths** and are forwarded through the Vite dev proxy:
 
 `UI (5173) -> Vite proxy -> API (8000)`
