@@ -17,7 +17,8 @@ import {
   getToken,
   login,
   memoriesList,
-  setToken
+  setToken,
+  validateStoredToken
 } from './lib/api';
 import { useUIState } from './store/uiState';
 import CameraScreen from './views/CameraScreen';
@@ -39,7 +40,7 @@ function toErrorMessage(error: unknown): string {
 export default function App() {
   const [activeView, setActiveView] = useState<VictusView>('overview');
   const [bootstrapped, setBootstrapped] = useState<boolean | null>(null);
-  const [authReady, setAuthReady] = useState(Boolean(getToken()));
+  const [authReady, setAuthReady] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
   const [username, setUsername] = useState((import.meta.env.VITE_TEST_USERNAME ?? 'admin').trim() || 'admin');
   const [password, setPassword] = useState((import.meta.env.VITE_TEST_PASSWORD ?? '').trim());
@@ -58,8 +59,24 @@ export default function App() {
       try {
         const status = await bootstrapStatus();
         setBootstrapped(status.bootstrapped);
-        setStatusMessage(status.bootstrapped ? 'Backend bootstrap complete.' : 'Backend needs bootstrap initialization.');
+        if (!status.bootstrapped) {
+          setAuthReady(false);
+          setStatusMessage('Backend needs bootstrap initialization.');
+          return;
+        }
+
+        const hasStoredToken = Boolean(getToken());
+        if (!hasStoredToken) {
+          setAuthReady(false);
+          setStatusMessage('Backend bootstrap complete. Please log in.');
+          return;
+        }
+
+        const tokenIsValid = await validateStoredToken();
+        setAuthReady(tokenIsValid);
+        setStatusMessage(tokenIsValid ? 'Backend bootstrap complete.' : 'Stored session expired. Please log in again.');
       } catch (error) {
+        setAuthReady(false);
         setStatusMessage(`Failed to check bootstrap: ${toErrorMessage(error)}`);
       }
     };

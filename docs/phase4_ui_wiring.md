@@ -9,7 +9,7 @@ Browser (React/Vite UI in apps/web)
         v
 Vite dev server proxy (apps/web/vite.config.ts)
         |
-        |  forwards API routes
+        |  forwards API routes (`/bootstrap`, `/login`, `/orchestrate`, `/memory`, `/finance`, `/files`, `/camera`, `/me`, `/api`)
         v
 FastAPI app (apps.local.main:app)
 ```
@@ -30,6 +30,7 @@ The UI now defaults to real backend calls. Mock/local response fabrication is no
   - `setToken()`
 - Local storage key: `victus_token`.
 - `apiFetch()` injects `Authorization: Bearer <token>` automatically when token exists.
+- On app startup, `validateStoredToken()` calls `GET /me` before enabling authenticated mode so expired tokens are cleared and the login form is shown again.
 
 ## UI Surface Wiring
 

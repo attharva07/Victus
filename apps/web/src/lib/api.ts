@@ -156,6 +156,23 @@ export async function orchestrate(text: string): Promise<unknown> {
   return parseJsonResponse<unknown>(response);
 }
 
+export async function validateStoredToken(): Promise<boolean> {
+  if (!getToken()) {
+    return false;
+  }
+
+  try {
+    await apiFetch('/me');
+    return true;
+  } catch (error) {
+    if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+      setToken(null);
+      return false;
+    }
+    throw error;
+  }
+}
+
 export async function memoriesSearch(q: string, limit = 20): Promise<{ results: unknown[] }> {
   const response = await apiFetch(`/memory/search?q=${encodeURIComponent(q)}&limit=${limit}`);
   return parseJsonResponse<{ results: unknown[] }>(response);
