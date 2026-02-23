@@ -1,5 +1,6 @@
 const TOKEN_STORAGE_KEY = 'victus_token';
 const MAX_ERROR_EXCERPT_CHARS = 400;
+const API_BASE_URL = (import.meta.env.VITE_API_URL ?? '').trim();
 
 let tokenCache: string | null = null;
 
@@ -36,6 +37,20 @@ function shorten(text: string): string {
 
 function isJsonContentType(contentType: string | null): boolean {
   return Boolean(contentType && contentType.toLowerCase().includes('application/json'));
+}
+
+function hasHttpProtocol(path: string): boolean {
+  return /^https?:\/\//i.test(path);
+}
+
+function buildRequestUrl(path: string): string {
+  if (!API_BASE_URL || hasHttpProtocol(path)) {
+    return path;
+  }
+
+  const normalizedBase = API_BASE_URL.endsWith('/') ? API_BASE_URL.slice(0, -1) : API_BASE_URL;
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  return `${normalizedBase}${normalizedPath}`;
 }
 
 export async function parseApiBody<T = unknown>(response: Response): Promise<T> {
@@ -82,6 +97,7 @@ export function setToken(token: string | null): void {
 export async function apiFetch<T = unknown>(path: string, opts: RequestInit = {}): Promise<T> {
   const headers = new Headers(opts.headers ?? {});
   const method = (opts.method ?? 'GET').toUpperCase();
+  const requestUrl = buildRequestUrl(path);
 
   if (opts.body && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
@@ -92,7 +108,7 @@ export async function apiFetch<T = unknown>(path: string, opts: RequestInit = {}
     headers.set('Authorization', `Bearer ${token}`);
   }
 
-  const response = await fetch(path, { ...opts, headers });
+  const response = await fetch(requestUrl, { ...opts, headers });
 
   if (!response.ok) {
     const contentType = response.headers.get('content-type');
