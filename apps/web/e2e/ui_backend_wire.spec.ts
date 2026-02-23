@@ -18,7 +18,7 @@ type FailedRequest = {
   requestHeaders: Record<string, string>;
 };
 
-const WIRE_ENDPOINTS = new Set(['/bootstrap/status', '/login', '/orchestrate']);
+const WIRE_ENDPOINTS = new Set(['/bootstrap/status', '/bootstrap/init', '/login', '/orchestrate']);
 const MAX_BODY_EXCERPT_CHARS = 500;
 
 function toPathname(rawUrl: string): string {
@@ -64,9 +64,11 @@ function assertSuccessfulRequest(calls: RecordedCall[], path: string, method: st
   const matches = matchingCalls(calls, path, method);
   if (matches.length === 0) {
     const observed = calls.map((call) => `${call.method} ${call.path} (${call.status})`).join(', ');
-    throw new Error(
-      [`No request observed for ${method} ${path}`, `Observed tracked calls: ${observed || '<none>'}`].join('\n')
-    );
+    throw new Error([
+      `No request observed for ${method} ${path}`,
+      `Observed tracked calls: ${observed || '<none>'}`,
+      ...calls.map((call) => formatCall(call))
+    ].join('\n\n'));
   }
 
   const failed = matches.find((call) => call.status < 200 || call.status >= 300);
@@ -123,24 +125,19 @@ test('UI ↔ backend wire test covers bootstrap status + login + orchestrate', a
 
   await page.goto('/');
 
-  await page.evaluate(async () => {
-    const response = await fetch('/bootstrap/status');
-    const bodyText = await response.text();
-    if (!response.ok) {
-      throw new Error(`bootstrap/status failed status=${response.status} body=${bodyText.slice(0, 300)}`);
-    }
-    const parsed = JSON.parse(bodyText) as { bootstrapped?: boolean };
-    if (!parsed.bootstrapped) {
-      throw new Error('Expected backend to be bootstrapped before wire test execution');
-    }
-  });
+  await page.evaluate(() => window.localStorage.removeItem('victus_token'));
 
-  await page.evaluate(() => {
-    window.localStorage.removeItem('victus_token');
-  });
+  if (await page.getByLabel('Bootstrap username').isVisible().catch(() => false)) {
+    await page.getByLabel('Bootstrap username').fill(process.env.VITE_TEST_USERNAME ?? 'admin');
+    await page.getByLabel('Bootstrap password').fill(process.env.VITE_TEST_PASSWORD ?? 'admin123456789');
+    await page.getByRole('button', { name: 'Init' }).click();
+  }
+
+  await page.getByLabel('Login username').fill(process.env.VITE_TEST_USERNAME ?? 'admin');
+  await page.getByLabel('Login password').fill(process.env.VITE_TEST_PASSWORD ?? 'admin123456789');
+  await page.getByRole('button', { name: 'Login' }).click();
 
   await expect(page.getByLabel('Command dock')).toBeVisible();
-
   await page.getByLabel('Command dock').fill('list recent memories');
   await page.getByLabel('Command dock').press('Enter');
 

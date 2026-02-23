@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useState } from 'react';
 import BottomStatusStrip from './components/BottomStrip';
 import CommandDock from './components/CommandDock';
 import ContextLane from './components/Lanes/ContextLane';
@@ -7,6 +7,18 @@ import LeftRail, { type VictusView } from './components/LeftRail';
 import { AlertsWidget, ApprovalsWidget, FailuresWidget, RemindersWidget, WorkflowsWidget } from './components/widgets/ContextWidgets';
 import { DialogueWidget, TimelineWidget } from './components/widgets/FocusWidgets';
 import type { AdaptiveItem } from './engine/adaptiveScore';
+import {
+  ApiError,
+  bootstrapInit,
+  bootstrapStatus,
+  cameraStatus,
+  filesList,
+  financeSummary,
+  getToken,
+  login,
+  memoriesList,
+  setToken
+} from './lib/api';
 import { useUIState } from './store/uiState';
 import CameraScreen from './views/CameraScreen';
 import FilesScreen from './views/FilesScreen';
@@ -17,9 +29,79 @@ function byKind(items: AdaptiveItem[], kind: AdaptiveItem['kind']) {
   return items.filter((item) => item.kind === kind);
 }
 
+function toErrorMessage(error: unknown): string {
+  if (error instanceof ApiError) {
+    return `(${error.status}) ${error.method} ${error.path}: ${error.bodyExcerpt}`;
+  }
+  return error instanceof Error ? error.message : String(error);
+}
+
 export default function App() {
   const [activeView, setActiveView] = useState<VictusView>('overview');
+  const [bootstrapped, setBootstrapped] = useState<boolean | null>(null);
+  const [authReady, setAuthReady] = useState(Boolean(getToken()));
+  const [statusMessage, setStatusMessage] = useState('');
+  const [username, setUsername] = useState((import.meta.env.VITE_TEST_USERNAME ?? 'admin').trim() || 'admin');
+  const [password, setPassword] = useState((import.meta.env.VITE_TEST_PASSWORD ?? '').trim());
+  const [loading, setLoading] = useState(false);
+
+  const [memoriesData, setMemoriesData] = useState<unknown[] | null>(null);
+  const [financeData, setFinanceData] = useState<unknown | null>(null);
+  const [filesData, setFilesData] = useState<string[] | null>(null);
+  const [cameraData, setCameraData] = useState<unknown | null>(null);
+  const [viewErrors, setViewErrors] = useState<Partial<Record<VictusView, string>>>({});
+
   const { items, timelineEvents, dialogueMessages, workflows, layout, pinState, actions } = useUIState();
+
+  useEffect(() => {
+    const checkBootstrap = async () => {
+      try {
+        const status = await bootstrapStatus();
+        setBootstrapped(status.bootstrapped);
+        setStatusMessage(status.bootstrapped ? 'Backend bootstrap complete.' : 'Backend needs bootstrap initialization.');
+      } catch (error) {
+        setStatusMessage(`Failed to check bootstrap: ${toErrorMessage(error)}`);
+      }
+    };
+
+    void checkBootstrap();
+  }, []);
+
+  useEffect(() => {
+    const loadViewData = async () => {
+      if (!authReady) {
+        return;
+      }
+      try {
+        if (activeView === 'memories') {
+          const response = await memoriesList();
+          setMemoriesData(response.results);
+        }
+        if (activeView === 'finance') {
+          const response = await financeSummary();
+          setFinanceData(response.report);
+        }
+        if (activeView === 'files') {
+          const response = await filesList();
+          setFilesData(response.files);
+        }
+        if (activeView === 'camera') {
+          const response = await cameraStatus();
+          setCameraData(response);
+        }
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 404) {
+          setViewErrors((prev) => ({ ...prev, [activeView]: 'Not implemented server-side.' }));
+          return;
+        }
+        const message = `Failed to load ${activeView}: ${toErrorMessage(error)}`;
+        setViewErrors((prev) => ({ ...prev, [activeView]: message }));
+        setStatusMessage(message);
+      }
+    };
+
+    void loadViewData();
+  }, [activeView, authReady]);
 
   const grouped = useMemo(
     () => ({
@@ -78,8 +160,55 @@ export default function App() {
     );
   };
 
+  const onLogin = async (event: FormEvent) => {
+    event.preventDefault();
+    setLoading(true);
+    try {
+      await login(username, password);
+      setAuthReady(true);
+      setStatusMessage('Logged in. Backend orchestration enabled.');
+    } catch (error) {
+      setStatusMessage(`Login failed: ${toErrorMessage(error)}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const onBootstrapInit = async (event: FormEvent) => {
+    event.preventDefault();
+    setLoading(true);
+    try {
+      const response = await bootstrapInit(username, password);
+      setBootstrapped(response.bootstrapped);
+      setStatusMessage('Bootstrap initialized. Please log in.');
+    } catch (error) {
+      setStatusMessage(`Bootstrap init failed: ${toErrorMessage(error)}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="h-screen overflow-hidden bg-bg text-slate-200">
+      <div className="px-4 pt-3 text-xs text-slate-400">{statusMessage || 'Checking backend status…'}</div>
+      {bootstrapped === false ? (
+        <form onSubmit={onBootstrapInit} className="mx-4 mt-2 flex items-center gap-2 rounded-lg border border-borderSoft/70 bg-panel p-3 text-xs">
+          <span className="text-slate-300">Initialize bootstrap:</span>
+          <input aria-label="Bootstrap username" value={username} onChange={(event) => setUsername(event.target.value)} className="rounded border border-borderSoft/70 bg-panelSoft/70 px-2 py-1 text-slate-100" />
+          <input aria-label="Bootstrap password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} className="rounded border border-borderSoft/70 bg-panelSoft/70 px-2 py-1 text-slate-100" />
+          <button disabled={loading} className="rounded border border-cyan-500/50 px-2 py-1 text-cyan-200">{loading ? 'Working…' : 'Init'}</button>
+        </form>
+      ) : null}
+      {bootstrapped && !authReady ? (
+        <form onSubmit={onLogin} className="mx-4 mt-2 flex items-center gap-2 rounded-lg border border-borderSoft/70 bg-panel p-3 text-xs">
+          <span className="text-slate-300">Login required:</span>
+          <input aria-label="Login username" value={username} onChange={(event) => setUsername(event.target.value)} className="rounded border border-borderSoft/70 bg-panelSoft/70 px-2 py-1 text-slate-100" />
+          <input aria-label="Login password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} className="rounded border border-borderSoft/70 bg-panelSoft/70 px-2 py-1 text-slate-100" />
+          <button disabled={loading} className="rounded border border-cyan-500/50 px-2 py-1 text-cyan-200">{loading ? 'Working…' : 'Login'}</button>
+          <button type="button" onClick={() => { setToken(null); setAuthReady(false); }} className="rounded border border-borderSoft/70 px-2 py-1 text-slate-300">Clear token</button>
+        </form>
+      ) : null}
+
       <div className="grid h-full min-h-0 grid-cols-[64px_minmax(0,1fr)] gap-4 px-3 pb-28 pt-3">
         <LeftRail activeView={activeView} onChangeView={setActiveView} />
         <main className="h-full min-h-0 overflow-hidden pb-20">
@@ -96,14 +225,25 @@ export default function App() {
               <ContextLane orderedIds={contextOrder} renderWidget={(kind) => <div className="transition-all duration-300 ease-out">{renderContextWidget(kind)}</div>} />
             </div>
           ) : null}
-          {activeView === 'memories' ? <MemoriesScreen /> : null}
-          {activeView === 'finance' ? <FinanceScreen /> : null}
-          {activeView === 'files' ? <FilesScreen /> : null}
-          {activeView === 'camera' ? <CameraScreen /> : null}
+          {activeView === 'memories' ? <MemoriesScreen data={memoriesData} authenticated={authReady} error={viewErrors.memories} /> : null}
+          {activeView === 'finance' ? <FinanceScreen data={financeData} authenticated={authReady} error={viewErrors.finance} /> : null}
+          {activeView === 'files' ? <FilesScreen data={filesData} authenticated={authReady} error={viewErrors.files} /> : null}
+          {activeView === 'camera' ? <CameraScreen data={cameraData} authenticated={authReady} error={viewErrors.camera} /> : null}
         </main>
       </div>
 
-      <CommandDock alignToDialogue={true} onInteract={() => undefined} onTypingChange={() => undefined} onSubmit={(value) => void actions.sendCommand(value)} />
+      <CommandDock
+        alignToDialogue={true}
+        onInteract={() => undefined}
+        onTypingChange={() => undefined}
+        onSubmit={(value) => {
+          if (!authReady) {
+            setStatusMessage('Please log in before issuing commands.');
+            return;
+          }
+          void actions.sendCommand(value);
+        }}
+      />
       <BottomStatusStrip mode={'adaptive'} planner={'active'} executor={'ready'} domain={'automation'} confidence={'stable (78)'} onSimulate={() => undefined} />
     </div>
   );
