@@ -52,7 +52,7 @@ export default function App() {
   const [cameraData, setCameraData] = useState<unknown | null>(null);
   const [viewErrors, setViewErrors] = useState<Partial<Record<VictusView, string>>>({});
 
-  const { items, timelineEvents, dialogueMessages, workflows, layout, pinState, actions } = useUIState(authReady);
+  const { items, timelineEvents, dialogueMessages, workflows, layout, pinState, pendingClarification, actions } = useUIState(authReady);
 
   useEffect(() => {
     const checkBootstrap = async () => {
@@ -160,9 +160,17 @@ export default function App() {
     if (item.kind === 'dialogue') {
       return (
         <DialogueWidget
-          messages={dialogueMessages.map((message) => ({ id: message.id, role: message.role, text: message.text, createdAt: message.created_at }))}
+          messages={dialogueMessages.map((message) => ({
+            id: message.id,
+            role: message.role,
+            text: message.text,
+            createdAt: message.created_at,
+            fields: message.fields,
+            candidates: message.candidates
+          }))}
           pinned={pinned}
           onTogglePin={() => actions.togglePin(item.id)}
+          onSuggestionSelect={(candidate) => void actions.useClarificationCandidate(candidate)}
         />
       );
     }
@@ -208,6 +216,9 @@ export default function App() {
   return (
     <div className="h-screen overflow-hidden bg-bg text-slate-200">
       <div className="px-4 pt-3 text-xs text-slate-400">{statusMessage || 'Checking backend status…'}</div>
+      {pendingClarification ? (
+        <div className="px-4 pt-1 text-[11px] text-amber-300/90">Clarification needed: respond with the missing details or pick a suggestion chip.</div>
+      ) : null}
       <div className="grid h-full min-h-0 grid-cols-[64px_minmax(0,1fr)] gap-4 px-3 pb-28 pt-3">
         <LeftRail activeView={activeView} onChangeView={setActiveView} />
         <main className="h-full min-h-0 overflow-hidden pb-20">

@@ -1,14 +1,39 @@
 import type { ApprovalItem, DialogueMessage, FailureItem, ReminderItem, TimelineEvent, WorkflowItem } from '../../types/victus-ui';
 import WidgetCard from './WidgetCard';
 
-export function DialogueWidget({ messages, pinned, onTogglePin }: { messages: DialogueMessage[]; pinned?: boolean; onTogglePin: () => void }) {
+export function DialogueWidget({
+  messages,
+  pinned,
+  onTogglePin,
+  onSuggestionSelect
+}: {
+  messages: DialogueMessage[];
+  pinned?: boolean;
+  onTogglePin: () => void;
+  onSuggestionSelect?: (candidate: string) => void;
+}) {
   return (
     <WidgetCard title="Dialogue" canExpand={messages.length > 3} pinned={pinned} onTogglePin={onTogglePin} testId="widget-dialogue" defaultExpanded>
       <ul className="space-y-2 text-xs">
         {messages.slice(-8).map((message) => (
           <li key={message.id} className="rounded-md border border-borderSoft/70 bg-panelSoft/40 px-2 py-1.5">
             <p className="text-[10px] uppercase tracking-wide text-slate-500">{message.role}</p>
-            <p className="text-slate-200">{message.text}</p>
+            <p className="whitespace-pre-wrap text-slate-200">{message.text}</p>
+            {message.fields?.length ? <p className="mt-1 text-[11px] text-slate-400">Needed fields: {message.fields.join(', ')}</p> : null}
+            {message.candidates?.length ? (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {message.candidates.map((candidate) => (
+                  <button
+                    key={`${message.id}-${candidate}`}
+                    type="button"
+                    onClick={() => onSuggestionSelect?.(candidate)}
+                    className="rounded-full border border-cyan-600/40 bg-cyan-500/10 px-2 py-0.5 text-[11px] text-cyan-100 hover:bg-cyan-500/20"
+                  >
+                    {candidate}
+                  </button>
+                ))}
+              </div>
+            ) : null}
           </li>
         ))}
       </ul>

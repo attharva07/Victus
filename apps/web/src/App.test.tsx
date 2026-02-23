@@ -14,6 +14,24 @@ vi.mock('./api/client', () => ({
   }
 }));
 
+
+vi.mock('./lib/api', async () => {
+  const actual = await vi.importActual<typeof import('./lib/api')>('./lib/api');
+  return {
+    ...actual,
+    bootstrapStatus: vi.fn().mockResolvedValue({ bootstrapped: true }),
+    validateStoredToken: vi.fn().mockResolvedValue(true),
+    getToken: vi.fn().mockReturnValue('token'),
+    login: vi.fn(),
+    bootstrapInit: vi.fn(),
+    setToken: vi.fn(),
+    memoriesList: vi.fn(),
+    financeSummary: vi.fn(),
+    filesList: vi.fn(),
+    cameraStatus: vi.fn()
+  };
+});
+
 const initialState: UIStateResponse = {
   reminders: [{ id: 'reminder-1', title: 'Approve onboarding policy edits', detail: 'Due today 2:00 PM', status: 'pending', urgency: 82, updated_at: 1 }],
   approvals: [{ id: 'approval-1', title: 'Filesystem tool scope adjustment', detail: 'Grant wider read/write scope for migration script.', status: 'pending', urgency: 74, updated_at: 2 }],

@@ -65,7 +65,14 @@ export type TimelineState = {
   completed: TimelineEvent[];
 };
 
-export type DialogueMessage = { id: string; role: 'user' | 'system'; text: string; createdAt: number };
+export type DialogueMessage = {
+  id: string;
+  role: 'user' | 'system';
+  text: string;
+  createdAt: number;
+  fields?: string[];
+  candidates?: string[];
+};
 
 export type BottomStripStatus = {
   mode: string;

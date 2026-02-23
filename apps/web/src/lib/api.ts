@@ -11,6 +11,7 @@ export type ApiErrorDetails = {
   bodyExcerpt: string;
   path: string;
   method: string;
+  url: string;
 };
 
 export class ApiError extends Error {
@@ -19,6 +20,7 @@ export class ApiError extends Error {
   bodyExcerpt: string;
   path: string;
   method: string;
+  url: string;
 
   constructor(details: ApiErrorDetails) {
     super(details.message);
@@ -28,6 +30,7 @@ export class ApiError extends Error {
     this.bodyExcerpt = details.bodyExcerpt;
     this.path = details.path;
     this.method = details.method;
+    this.url = details.url;
   }
 }
 
@@ -120,12 +123,13 @@ export async function apiFetch<T = unknown>(path: string, opts: RequestInit = {}
     }
 
     throw new ApiError({
-      message: `${method} ${path} failed with status ${response.status}`,
+      message: `${method} ${requestUrl} failed with status ${response.status}`,
       status: response.status,
       contentType,
       bodyExcerpt,
       path,
-      method
+      method,
+      url: requestUrl
     });
   }
 
@@ -146,7 +150,8 @@ export async function login(username: string, password: string): Promise<string>
       contentType: 'application/json',
       bodyExcerpt: '<missing access_token>',
       path: '/login',
-      method: 'POST'
+      method: 'POST',
+      url: buildRequestUrl('/login')
     });
   }
 
@@ -167,7 +172,7 @@ export async function bootstrapInit(username: string, password: string): Promise
 
 const useMocks = import.meta.env.VITE_USE_MOCKS === 'true';
 
-export async function orchestrate(text: string): Promise<unknown> {
+export async function orchestrateCommand(text: string): Promise<unknown> {
   if (useMocks) {
     return {
       ok: true,
@@ -182,6 +187,8 @@ export async function orchestrate(text: string): Promise<unknown> {
     body: JSON.stringify({ text })
   });
 }
+
+export const orchestrate = orchestrateCommand;
 
 export async function validateStoredToken(): Promise<boolean> {
   if (!getToken()) {
