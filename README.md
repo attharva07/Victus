@@ -34,6 +34,11 @@ Adaptive layout simulation (Phase 4B):
 - In the web UI, use **Simulate Signals Update** in the bottom strip to cycle mocked layout signals.
 - If you manually focus a card, use **Return to Adaptive** to restore engine-driven focus behavior.
 
+Adaptive engine wiring (Phase 4C):
+- `apps/web/src/engine/adaptiveScore.ts` defines unified item scoring and shared weights (`urgency`, `confidenceSignal`, `recencyBoost`, plus severity overrides).
+- `apps/web/src/engine/layoutEngine.ts` maps scored items into `focus`, `context`, and always-on `timeline` lanes with pin-preserving ordering.
+- `apps/web/src/store/uiState.ts` is the in-memory UI state store; action handlers (`approve`, `deny`, `done`, `resume`) mutate item state, append timeline events, and trigger automatic re-layout.
+
 
 ### Production prep (Option A: FastAPI serves built UI)
 Build the frontend:

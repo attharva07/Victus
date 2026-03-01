@@ -1,24 +1,20 @@
-import { useState } from 'react';
+export default function CameraScreen({ data, authenticated, error }: { data: unknown | null; authenticated: boolean; error?: string }) {
+  if (error) {
+    return <section className="h-full rounded-xl border border-borderSoft/80 bg-panel/60 p-4 text-sm text-slate-400">{error}</section>;
+  }
 
-export default function CameraScreen() {
-  const [captures, setCaptures] = useState<string[]>([]);
+  if (!authenticated) {
+    return <section className="h-full rounded-xl border border-borderSoft/80 bg-panel/60 p-4 text-sm text-slate-400">Login required to read camera status.</section>;
+  }
+
+  if (!data) {
+    return <section className="h-full rounded-xl border border-borderSoft/80 bg-panel/60 p-4 text-sm text-slate-400">Loading camera status from /camera/status…</section>;
+  }
 
   return (
-    <section className="h-full rounded-xl border border-borderSoft/80 bg-panel/60 p-3">
-      <div className="flex h-full flex-col rounded-lg border border-borderSoft/70 bg-panel p-4">
-        <h2 className="text-sm uppercase tracking-[0.14em] text-slate-300">Camera</h2>
-        <p className="mt-2 text-sm text-slate-400">Status: standby · mock device connected</p>
-        <button
-          onClick={() => setCaptures((prev) => [`Capture ${prev.length + 1} @ ${new Date().toLocaleTimeString()}`, ...prev])}
-          className="mt-4 w-fit rounded-md border border-cyan-500/50 bg-cyan-500/10 px-3 py-2 text-xs text-cyan-100 hover:bg-cyan-500/20"
-        >
-          Capture
-        </button>
-
-        <ul className="mt-4 min-h-0 flex-1 space-y-2 overflow-y-auto subtle-scrollbar pr-1 text-sm text-slate-300" aria-label="Capture activity">
-          {captures.length === 0 ? <li className="text-slate-500">No captures yet.</li> : captures.map((entry) => <li key={entry}>{entry}</li>)}
-        </ul>
-      </div>
+    <section className="h-full rounded-xl border border-borderSoft/80 bg-panel/60 p-4">
+      <h2 className="text-sm uppercase tracking-[0.14em] text-slate-300">Camera status</h2>
+      <pre className="mt-3 max-h-[80vh] overflow-auto text-xs text-slate-300">{JSON.stringify(data, null, 2)}</pre>
     </section>
   );
 }

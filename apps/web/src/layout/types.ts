@@ -1,23 +1,9 @@
-import type { MockUiState } from '../state/mockState';
+import type { CardId, CardSize, CardRole, VictusUIState } from '../types/victus-ui';
 
 export type LaneId = 'LEFT_RAIL' | 'FOCUS' | 'CONTEXT' | 'BOTTOM_STRIP';
-export type WidgetSize = 'S' | 'M' | 'L';
-export type WidgetRole = 'primary' | 'secondary' | 'tertiary';
-
-export type WidgetId =
-  | 'dialogue'
-  | 'timeline'
-  | 'healthPulse'
-  | 'systemOverview'
-  | 'worldTldr'
-  | 'workflowsBoard'
-  | 'remindersPanel'
-  | 'approvalsPanel'
-  | 'failures'
-  | 'approvals'
-  | 'alerts'
-  | 'reminders'
-  | 'workflows';
+export type WidgetSize = CardSize;
+export type WidgetRole = CardRole;
+export type WidgetId = CardId;
 
 export type WidgetDefinition = {
   id: WidgetId;
@@ -27,8 +13,8 @@ export type WidgetDefinition = {
   heightHint: number;
   pinable: boolean;
   expandable: boolean;
-  visibleWhen: (state: MockUiState, pinned: boolean) => boolean;
-  score: (state: MockUiState) => number;
+  visibleWhen: (state: VictusUIState, pinned: boolean) => boolean;
+  score: (state: VictusUIState) => number;
 };
 
 export type FocusPlacement = {
@@ -42,13 +28,7 @@ export type FocusPlacement = {
 
 export type PinnedAnchor = 'top' | 'normal';
 
-export type FocusPinState = {
-  pinned: boolean;
-  col: 0 | 1;
-  order: number;
-  anchor: PinnedAnchor;
-};
-
+export type FocusPinState = { pinned: boolean; col: 0 | 1; order: number; anchor: PinnedAnchor };
 export type FocusPinMap = Partial<Record<WidgetId, FocusPinState>>;
 
 export type LayoutPlan = {
@@ -61,10 +41,7 @@ export type LayoutPlan = {
   cardStates?: Partial<Record<VictusCardId, CardState>>;
 };
 
-export type LayoutEngineConfig = {
-  urgencyWeight: number;
-  confidenceMultiplierBase: number;
-};
+export type LayoutEngineConfig = { urgencyWeight: number; confidenceMultiplierBase: number };
 
 export type VictusCardId = WidgetId | 'worldTldr';
 export type CardState = 'focus' | 'peek' | 'chip';
