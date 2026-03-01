@@ -76,7 +76,7 @@ def test_orchestrate_known_memory_intent(monkeypatch: pytest.MonkeyPatch, tmp_pa
     assert payload["actions"]
 
 
-def test_orchestrate_unknown_intent_returns_structured_error(
+def test_orchestrate_unknown_intent_falls_back_to_dialogue(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     client = _client_with_env(monkeypatch, tmp_path)
@@ -86,4 +86,6 @@ def test_orchestrate_unknown_intent_returns_structured_error(
     response = client.post("/orchestrate", json={"utterance": "hello"}, headers=headers)
     assert response.status_code == 200
     payload = response.json()
-    assert payload["error"] in {"clarify", "unknown_intent"}
+    assert payload["intent"]["action"] in {"noop", "chat.reply"}
+    assert payload["executed"] is False
+    assert payload["message"]

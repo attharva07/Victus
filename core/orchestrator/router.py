@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from pydantic import BaseModel, ValidationError
 
 from adapters.llm.provider import LLMProposer, ProposalResult
@@ -19,9 +21,11 @@ from core.orchestrator.schemas import (
     OrchestrateRequest,
     OrchestrateResponse,
 )
+from victus.ui_state.service import dialogue_send
 
 _ALLOWED_ACTIONS = [
     "noop",
+    "chat.reply",
     "camera.status",
     "camera.capture",
     "camera.recognize",
@@ -100,6 +104,10 @@ class _CameraRecognizeArgs(BaseModel):
     pass
 
 
+class _ChatReplyArgs(BaseModel):
+    pass
+
+
 _ARG_SCHEMAS: dict[str, type[BaseModel]] = {
     "memory.add": _MemoryAddArgs,
     "memory.search": _MemorySearchArgs,
@@ -114,7 +122,26 @@ _ARG_SCHEMAS: dict[str, type[BaseModel]] = {
     "camera.status": _CameraStatusArgs,
     "camera.capture": _CameraCaptureArgs,
     "camera.recognize": _CameraRecognizeArgs,
+    "chat.reply": _ChatReplyArgs,
 }
+
+
+
+
+_SMALLTALK_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"^\s*(hi|hello|hey)\b", re.IGNORECASE),
+    re.compile(r"\bhow are you\b", re.IGNORECASE),
+    re.compile(r"\bwhat(?:'s| is) up\b", re.IGNORECASE),
+    re.compile(r"^\s*good (morning|afternoon|evening)\b", re.IGNORECASE),
+    re.compile(r"^\s*howdy\b", re.IGNORECASE),
+)
+
+
+def _is_smalltalk(text: str) -> bool:
+    normalized = text.strip()
+    if not normalized:
+        return False
+    return any(pattern.search(normalized) for pattern in _SMALLTALK_PATTERNS)
 
 
 def _deterministic_route(request: OrchestrateRequest) -> Intent | None:
@@ -128,7 +155,7 @@ def _execute_intent(intent: Intent) -> tuple[str, list[ActionResult]]:
         service = CameraService()
         status = service.status()
         result = ActionResult(action=action, parameters=params, result=status.model_dump())
-        return status.message, [result]
+        return f"Camera status: {status.message}", [result]
     if action == "camera.capture":
         service = CameraService()
         try:
@@ -137,7 +164,7 @@ def _execute_intent(intent: Intent) -> tuple[str, list[ActionResult]]:
             result = ActionResult(action=action, parameters=params, result={"error": str(exc)})
             return str(exc), [result]
         result = ActionResult(action=action, parameters=params, result=capture.model_dump())
-        return "Captured image.", [result]
+        return "Captured an image from the camera.", [result]
     if action == "camera.recognize":
         service = CameraService()
         try:
@@ -146,7 +173,7 @@ def _execute_intent(intent: Intent) -> tuple[str, list[ActionResult]]:
             result = ActionResult(action=action, parameters=params, result={"error": str(exc)})
             return str(exc), [result]
         result = ActionResult(action=action, parameters=params, result=recognition.model_dump())
-        return f"Detected {len(recognition.matches)} faces.", [result]
+        return f"Recognized {len(recognition.matches)} face matches.", [result]
     if action == "memory.add":
         memory_id = add_memory(
             content=params["content"],
@@ -160,7 +187,12 @@ def _execute_intent(intent: Intent) -> tuple[str, list[ActionResult]]:
         results = search_memories(query=params.get("query", ""), tags=params.get("tags"), limit=params.get("limit", 10))
         audit_event("orchestrate_memory_search", query=params.get("query", ""))
         result = ActionResult(action=action, parameters=params, result={"results": results})
-        return f"Found {len(results)} memories.", [result]
+        query = params.get("query", "")
+        latest = ""
+        if results:
+            excerpt = str(results[0].get("content", "")).strip()
+            latest = f" Latest: {safe_excerpt(excerpt, max_len=80)}." if excerpt else ""
+        return f"Found {len(results)} memories matching '{query}'.{latest}", [result]
     if action == "memory.list":
         results = list_recent(limit=params.get("limit", 20))
         audit_event("orchestrate_memory_list", limit=params.get("limit", 20))
@@ -185,7 +217,8 @@ def _execute_intent(intent: Intent) -> tuple[str, list[ActionResult]]:
             parameters=params,
             result={"id": transaction_id, "amount_cents": amount_cents},
         )
-        return f"Recorded transaction {transaction_id}.", [result]
+        amount_usd = amount_cents / 100
+        return f"Recorded ${amount_usd:.2f} in {params.get('category', 'uncategorized')}.", [result]
     if action == "finance.list_transactions":
         results = list_transactions(limit=params.get("limit", 50), category=params.get("category"))
         audit_event("orchestrate_finance_list", count=len(results))
@@ -199,15 +232,15 @@ def _execute_intent(intent: Intent) -> tuple[str, list[ActionResult]]:
     if action == "files.list":
         files = list_sandbox_files()
         result = ActionResult(action=action, parameters=params, result={"files": files})
-        return f"Listed {len(files)} files.", [result]
+        return f"Listed {len(files)} sandbox files.", [result]
     if action == "files.read":
         content = read_sandbox_file(params["path"])
         result = ActionResult(action=action, parameters=params, result={"content": content})
-        return f"Read file {params['path']}.", [result]
+        return f"Read {params['path']} ({len(content)} chars).", [result]
     if action == "files.write":
         write_sandbox_file(params["path"], params.get("content", ""), params.get("mode", "overwrite"))
         result = ActionResult(action=action, parameters=params, result={"ok": True})
-        return f"Wrote file {params['path']}.", [result]
+        return f"Wrote {params['path']} using {params.get('mode', 'overwrite')} mode.", [result]
     return "No action executed.", []
 
 
@@ -246,6 +279,40 @@ def _validate_proposal(proposal: ProposalResult) -> Intent | None:
         return None
 
 
+def _chat_fallback_response(
+    request: OrchestrateRequest,
+    trace: dict[str, object] | None,
+    *,
+    intent_action: str = "noop",
+) -> OrchestrateResponse:
+    ui_state = dialogue_send(request.normalized_text())
+    system_messages = [message for message in ui_state.dialogue_messages if message.role == "system"]
+    message = system_messages[-1].text if system_messages else "Thanks for the message."
+    result: dict[str, object] = {"ui_state": ui_state.model_dump()}
+    if trace is not None:
+        result["trace"] = trace
+    return OrchestrateResponse(
+        intent=Intent(action=intent_action, parameters={}, confidence=1.0),
+        message=message,
+        actions=[],
+        mode="deterministic",
+        executed=False,
+        result=result,
+    )
+
+
+def _response_result(
+    actions: list[ActionResult],
+    trace: dict[str, object] | None,
+) -> dict[str, object] | None:
+    result: dict[str, object] = {}
+    if actions and actions[0].result:
+        result.update(actions[0].result)
+    if trace is not None:
+        result["trace"] = trace
+    return result or None
+
+
 def _log_orchestration_decision(
     *,
     mode: str,
@@ -278,6 +345,34 @@ def route_intent(
     config = get_orchestrator_config()
     text = request.normalized_text().strip()
     force_llm = bool(request.context.get("force_llm"))
+    debug_enabled = bool(request.context.get("debug"))
+    selected_model: str | None = None
+    proposal_confidence: float | None = None
+    llm_was_called = False
+
+    def _trace(router_mode: str) -> dict[str, object] | None:
+        if not debug_enabled:
+            return None
+        return {
+            "router_mode": router_mode,
+            "llm_enabled": config.llm_enabled,
+            "selected_model": selected_model,
+            "proposal_confidence": proposal_confidence,
+            "autoexec": config.llm_allow_autoexec,
+            "thresholds": {"execute": config.conf_execute, "propose": config.conf_propose},
+        }
+
+    if _is_smalltalk(text):
+        _log_orchestration_decision(
+            mode="deterministic",
+            llm_used=False,
+            selected_model=None,
+            action="chat.reply",
+            confidence=1.0,
+            executed=False,
+            error_type=None,
+        )
+        return _chat_fallback_response(request, _trace("chat_fallback"), intent_action="chat.reply")
 
     if not force_llm:
         deterministic_intent = _deterministic_route(request)
@@ -300,11 +395,10 @@ def route_intent(
                     actions=actions,
                     mode="deterministic",
                     executed=True,
-                    result=actions[0].result if actions else None,
+                    result=_response_result(actions, _trace("deterministic")),
                 )
 
     if not config.enable_llm_fallback:
-        response = _unknown_intent_response(text)
         _log_orchestration_decision(
             mode="deterministic",
             llm_used=False,
@@ -312,9 +406,9 @@ def route_intent(
             action="noop",
             confidence=0.0,
             executed=False,
-            error_type=response.error,
+            error_type=None,
         )
-        return response
+        return _chat_fallback_response(request, _trace("chat_fallback"))
 
     audit_event(
         "llm.propose.request",
@@ -325,6 +419,8 @@ def route_intent(
     )
     proposal = llm_provider.propose(text=text, domain=request.domain, candidates=_ALLOWED_ACTIONS, context=request.context)
     llm_was_called = True
+    selected_model = proposal.selected_model
+    proposal_confidence = proposal.confidence
     audit_event(
         "llm.propose.result",
         ok=proposal.ok,
@@ -335,7 +431,6 @@ def route_intent(
     )
 
     if not proposal.llm_used and proposal.reason in {"ollama_unreachable", "ollama_no_model", "provider_stub", "llm_disabled"}:
-        response = _unknown_intent_response(text)
         _log_orchestration_decision(
             mode="deterministic",
             llm_used=llm_was_called,
@@ -343,9 +438,9 @@ def route_intent(
             action="noop",
             confidence=0.0,
             executed=False,
-            error_type=response.error,
+            error_type=None,
         )
-        return response
+        return _chat_fallback_response(request, _trace("chat_fallback"))
 
     if proposal.action is not None and proposal.action not in _ALLOWED_ACTIONS:
         response = _unknown_intent_response(text)
@@ -362,7 +457,6 @@ def route_intent(
 
     validated_intent = _validate_proposal(proposal)
     if validated_intent is None:
-        response = _clarify_response(proposal.clarify_question)
         _log_orchestration_decision(
             mode="llm_proposal",
             llm_used=llm_was_called,
@@ -370,12 +464,24 @@ def route_intent(
             action=proposal.action or "noop",
             confidence=proposal.confidence,
             executed=False,
-            error_type=response.error,
+            error_type=None,
         )
-        return response
+        return _chat_fallback_response(request, _trace("chat_fallback"))
 
     validated_intent = validate_intent(validated_intent)
     confidence = validated_intent.confidence
+
+    if validated_intent.action == "chat.reply":
+        _log_orchestration_decision(
+            mode="llm_proposal",
+            llm_used=llm_was_called,
+            selected_model=proposal.selected_model,
+            action=validated_intent.action,
+            confidence=confidence,
+            executed=False,
+            error_type=None,
+        )
+        return _chat_fallback_response(request, _trace("chat_fallback"), intent_action="chat.reply")
 
     should_auto_execute = (
         config.llm_allow_autoexec and confidence >= config.conf_execute and validated_intent.action != "noop"
@@ -402,7 +508,7 @@ def route_intent(
                 "confidence": confidence,
             },
             executed=True,
-            result=actions[0].result if actions else None,
+            result=_response_result(actions, _trace("llm_proposal")),
         )
 
     if confidence >= config.conf_propose:
@@ -417,7 +523,7 @@ def route_intent(
                 "confidence": confidence,
             },
             executed=False,
-            result=None,
+            result={"trace": trace} if (trace := _trace("llm_proposal")) is not None else None,
         )
         _log_orchestration_decision(
             mode="llm_proposal",
@@ -430,10 +536,6 @@ def route_intent(
         )
         return response
 
-    response = _clarify_response(
-        proposal.clarify_question
-        or "Do you want memory, finance, files, or camera? For example: 'remember ...' or 'spent 8 on coffee'."
-    )
     _log_orchestration_decision(
         mode="llm_proposal",
         llm_used=llm_was_called,
@@ -441,6 +543,6 @@ def route_intent(
         action=validated_intent.action,
         confidence=confidence,
         executed=False,
-        error_type=response.error,
+        error_type=None,
     )
-    return response
+    return _chat_fallback_response(request, _trace("chat_fallback"))

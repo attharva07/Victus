@@ -4,6 +4,7 @@ from core.orchestrator.schemas import Intent
 
 _ALLOWED_ACTIONS = {
     "noop",
+    "chat.reply",
     "camera.status",
     "camera.capture",
     "camera.recognize",
