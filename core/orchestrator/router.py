@@ -324,6 +324,7 @@ def route_intent(
         candidate_count=len(_ALLOWED_ACTIONS),
     )
     proposal = llm_provider.propose(text=text, domain=request.domain, candidates=_ALLOWED_ACTIONS, context=request.context)
+    llm_was_called = True
     audit_event(
         "llm.propose.result",
         ok=proposal.ok,
@@ -337,10 +338,23 @@ def route_intent(
         response = _unknown_intent_response(text)
         _log_orchestration_decision(
             mode="deterministic",
-            llm_used=False,
+            llm_used=llm_was_called,
             selected_model=proposal.selected_model,
             action="noop",
             confidence=0.0,
+            executed=False,
+            error_type=response.error,
+        )
+        return response
+
+    if proposal.action is not None and proposal.action not in _ALLOWED_ACTIONS:
+        response = _unknown_intent_response(text)
+        _log_orchestration_decision(
+            mode="llm_proposal",
+            llm_used=llm_was_called,
+            selected_model=proposal.selected_model,
+            action=proposal.action,
+            confidence=proposal.confidence,
             executed=False,
             error_type=response.error,
         )
@@ -351,7 +365,7 @@ def route_intent(
         response = _clarify_response(proposal.clarify_question)
         _log_orchestration_decision(
             mode="llm_proposal",
-            llm_used=proposal.llm_used,
+            llm_used=llm_was_called,
             selected_model=proposal.selected_model,
             action=proposal.action or "noop",
             confidence=proposal.confidence,
@@ -370,7 +384,7 @@ def route_intent(
         message, actions = _execute_intent(validated_intent)
         _log_orchestration_decision(
             mode="llm_proposal",
-            llm_used=proposal.llm_used,
+            llm_used=llm_was_called,
             selected_model=proposal.selected_model,
             action=validated_intent.action,
             confidence=confidence,
@@ -407,7 +421,7 @@ def route_intent(
         )
         _log_orchestration_decision(
             mode="llm_proposal",
-            llm_used=proposal.llm_used,
+            llm_used=llm_was_called,
             selected_model=proposal.selected_model,
             action=validated_intent.action,
             confidence=confidence,
@@ -422,7 +436,7 @@ def route_intent(
     )
     _log_orchestration_decision(
         mode="llm_proposal",
-        llm_used=proposal.llm_used,
+        llm_used=llm_was_called,
         selected_model=proposal.selected_model,
         action=validated_intent.action,
         confidence=confidence,

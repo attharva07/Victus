@@ -49,6 +49,7 @@ class LLMProposer:
                 context=context,
                 base_url=config["ollama_base_url"],
                 model_priority=config["model_priority"],
+                configured_model=config["configured_model"],
                 on_error=self._set_error,
                 on_selected_model=self._set_selected_model,
             )
@@ -96,11 +97,13 @@ def _get_llm_config() -> dict[str, Any]:
     ollama_base_url = os.getenv("VICTUS_OLLAMA_BASE_URL", "http://127.0.0.1:11434").strip() or "http://127.0.0.1:11434"
     model_priority_raw = os.getenv("VICTUS_OLLAMA_MODEL_PRIORITY", "mistral,llama3.1:8b")
     model_priority = [entry.strip() for entry in model_priority_raw.split(",") if entry.strip()]
+    configured_model = os.getenv("VICTUS_LLM_MODEL", "").strip()
     return {
         "enabled": enabled,
         "provider": provider,
         "ollama_base_url": ollama_base_url,
         "model_priority": model_priority or ["mistral", "llama3.1:8b"],
+        "configured_model": configured_model or None,
     }
 
 
@@ -144,17 +147,26 @@ def _http_get_json(url: str, timeout: int = 5) -> dict[str, Any]:
         return json.loads(response.read().decode("utf-8"))
 
 
-def _select_ollama_model(base_url: str, model_priority: list[str]) -> str | None:
+def _select_ollama_model(base_url: str, model_priority: list[str]) -> tuple[str | None, str | None]:
     try:
         tags = _http_get_json(f"{base_url.rstrip('/')}/api/tags")
+    except (error.URLError, TimeoutError):
+        return None, "ollama_unreachable"
     except Exception:  # noqa: BLE001
-        return None
-    models = tags.get("models", []) if isinstance(tags, dict) else []
-    available = {entry.get("name") for entry in models if isinstance(entry, dict) and entry.get("name")}
+        return None, "ollama_unreachable"
+
+    if not isinstance(tags, dict):
+        return (model_priority[0], None) if model_priority else (None, "ollama_no_model")
+
+    raw_models = tags.get("models")
+    if not isinstance(raw_models, list):
+        return (model_priority[0], None) if model_priority else (None, "ollama_no_model")
+
+    available = {entry.get("name") for entry in raw_models if isinstance(entry, dict) and entry.get("name")}
     for candidate in model_priority:
         if candidate in available:
-            return candidate
-    return None
+            return candidate, None
+    return None, "ollama_no_model"
 
 
 def _parse_intent_payload(payload_text: str) -> tuple[dict[str, Any] | None, str | None]:
@@ -174,14 +186,20 @@ def _propose_with_ollama(
     context: dict[str, Any],
     base_url: str,
     model_priority: list[str],
+    configured_model: str | None,
     on_error: Any,
     on_selected_model: Any,
 ) -> ProposalResult:
-    model = _select_ollama_model(base_url, model_priority)
+    if configured_model:
+        model = configured_model
+        model_error = None
+    else:
+        model, model_error = _select_ollama_model(base_url, model_priority)
     on_selected_model(model)
     if model is None:
-        on_error("ollama_no_model")
-        return ProposalResult(ok=False, confidence=0.0, reason="ollama_no_model")
+        error_reason = model_error or "ollama_no_model"
+        on_error(error_reason)
+        return ProposalResult(ok=False, confidence=0.0, reason=error_reason)
 
     endpoint = f"{base_url.rstrip('/')}/api/generate"
     request_payload = {
@@ -217,7 +235,9 @@ def _propose_with_ollama(
         return ProposalResult(ok=False, confidence=0.0, reason="ollama_invalid_json", selected_model=model, llm_used=True)
 
     action = parsed.get("action")
-    parameters = parsed.get("parameters", {})
+    parameters = parsed.get("parameters")
+    if not isinstance(parameters, dict):
+        parameters = parsed.get("args", {})
     confidence = parsed.get("confidence", 0.0)
     clarify_question = parsed.get("clarify_question")
     if not isinstance(parameters, dict):
