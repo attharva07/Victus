@@ -20,28 +20,42 @@ from core.orchestrator.schemas import (
     OrchestrateResponse,
 )
 
-_PROPOSER_CANDIDATES = [
+_ALLOWED_ACTIONS = [
+    "noop",
+    "camera.status",
+    "camera.capture",
+    "camera.recognize",
     "memory.add",
     "memory.search",
+    "memory.list",
+    "memory.delete",
     "finance.add_transaction",
     "finance.list_transactions",
+    "finance.summary",
+    "files.list",
     "files.read",
     "files.write",
-    "camera.status",
 ]
-
-_PROPOSER_ALLOWLIST = set(_PROPOSER_CANDIDATES)
-_SAFE_AUTOEXEC_ALLOWLIST = {"memory.add", "memory.search"}
 
 
 class _MemoryAddArgs(BaseModel):
     content: str
+    tags: list[str] | None = None
+    importance: int | None = None
 
 
 class _MemorySearchArgs(BaseModel):
     query: str = ""
     tags: list[str] | None = None
     limit: int = 10
+
+
+class _MemoryListArgs(BaseModel):
+    limit: int = 20
+
+
+class _MemoryDeleteArgs(BaseModel):
+    id: str
 
 
 class _FinanceAddArgs(BaseModel):
@@ -55,6 +69,11 @@ class _FinanceListArgs(BaseModel):
     limit: int = 50
 
 
+class _FinanceSummaryArgs(BaseModel):
+    period: str = "week"
+    group_by: str = "category"
+
+
 class _FilesReadArgs(BaseModel):
     path: str
 
@@ -65,18 +84,36 @@ class _FilesWriteArgs(BaseModel):
     mode: str = "overwrite"
 
 
+class _FilesListArgs(BaseModel):
+    pass
+
+
 class _CameraStatusArgs(BaseModel):
+    pass
+
+
+class _CameraCaptureArgs(BaseModel):
+    pass
+
+
+class _CameraRecognizeArgs(BaseModel):
     pass
 
 
 _ARG_SCHEMAS: dict[str, type[BaseModel]] = {
     "memory.add": _MemoryAddArgs,
     "memory.search": _MemorySearchArgs,
+    "memory.list": _MemoryListArgs,
+    "memory.delete": _MemoryDeleteArgs,
     "finance.add_transaction": _FinanceAddArgs,
     "finance.list_transactions": _FinanceListArgs,
+    "finance.summary": _FinanceSummaryArgs,
     "files.read": _FilesReadArgs,
     "files.write": _FilesWriteArgs,
+    "files.list": _FilesListArgs,
     "camera.status": _CameraStatusArgs,
+    "camera.capture": _CameraCaptureArgs,
+    "camera.recognize": _CameraRecognizeArgs,
 }
 
 
@@ -111,7 +148,11 @@ def _execute_intent(intent: Intent) -> tuple[str, list[ActionResult]]:
         result = ActionResult(action=action, parameters=params, result=recognition.model_dump())
         return f"Detected {len(recognition.matches)} faces.", [result]
     if action == "memory.add":
-        memory_id = add_memory(content=params["content"])
+        memory_id = add_memory(
+            content=params["content"],
+            tags=params.get("tags"),
+            importance=params.get("importance", 5),
+        )
         audit_event("orchestrate_memory_add", memory_id=memory_id)
         result = ActionResult(action=action, parameters=params, result={"id": memory_id})
         return f"Saved memory {memory_id}.", [result]
@@ -184,91 +225,205 @@ def _unknown_intent_response(text: str) -> OrchestrateErrorResponse:
     )
 
 
+def _clarify_response(question: str | None = None) -> OrchestrateErrorResponse:
+    return OrchestrateErrorResponse(
+        error="clarify",
+        message=question or "Can you confirm if this is memory, finance, files, or camera?",
+        candidates=["memory.add", "finance.add_transaction", "files.read", "camera.status"],
+    )
+
+
 def _validate_proposal(proposal: ProposalResult) -> Intent | None:
     if not proposal.ok or proposal.action is None:
-        return None
-    if proposal.action not in _PROPOSER_ALLOWLIST:
         return None
     schema = _ARG_SCHEMAS.get(proposal.action)
     if schema is None:
         return None
     try:
         parsed_args = schema.model_validate(proposal.args)
+        return Intent(action=proposal.action, parameters=parsed_args.model_dump(), confidence=proposal.confidence)
     except ValidationError:
         return None
-    return Intent(action=proposal.action, parameters=parsed_args.model_dump(), confidence=proposal.confidence)
+
+
+def _log_orchestration_decision(
+    *,
+    mode: str,
+    llm_used: bool,
+    selected_model: str | None,
+    action: str,
+    confidence: float,
+    executed: bool,
+    error_type: str | None,
+) -> None:
+    audit_event(
+        "orchestrate.decision",
+        mode=mode,
+        llm_used=llm_used,
+        selected_model=selected_model,
+        action=action,
+        confidence=confidence,
+        executed=executed,
+        error_type=error_type,
+    )
+
+
+def allowed_actions() -> list[str]:
+    return list(_ALLOWED_ACTIONS)
 
 
 def route_intent(
     request: OrchestrateRequest, llm_provider: LLMProposer
 ) -> OrchestrateResponse | OrchestrateErrorResponse:
-    text = request.normalized_text().strip()
-    intent = _deterministic_route(request)
-    if intent is not None:
-        intent = validate_intent(intent)
-        if intent.action == "noop":
-            return _unknown_intent_response(text)
-        message, actions = _execute_intent(intent)
-        return OrchestrateResponse(intent=intent, message=message, actions=actions, mode="deterministic", executed=True)
-
     config = get_orchestrator_config()
+    text = request.normalized_text().strip()
+    force_llm = bool(request.context.get("force_llm"))
+
+    if not force_llm:
+        deterministic_intent = _deterministic_route(request)
+        if deterministic_intent is not None and deterministic_intent.confidence >= 1.0:
+            deterministic_intent = validate_intent(deterministic_intent)
+            if deterministic_intent.action != "noop":
+                message, actions = _execute_intent(deterministic_intent)
+                _log_orchestration_decision(
+                    mode="deterministic",
+                    llm_used=False,
+                    selected_model=None,
+                    action=deterministic_intent.action,
+                    confidence=deterministic_intent.confidence,
+                    executed=True,
+                    error_type=None,
+                )
+                return OrchestrateResponse(
+                    intent=deterministic_intent,
+                    message=message,
+                    actions=actions,
+                    mode="deterministic",
+                    executed=True,
+                    result=actions[0].result if actions else None,
+                )
+
     if not config.enable_llm_fallback:
-        return _unknown_intent_response(text)
+        response = _unknown_intent_response(text)
+        _log_orchestration_decision(
+            mode="deterministic",
+            llm_used=False,
+            selected_model=None,
+            action="noop",
+            confidence=0.0,
+            executed=False,
+            error_type=response.error,
+        )
+        return response
 
     audit_event(
         "llm.propose.request",
         text_hash=text_hash(text),
         text_excerpt=safe_excerpt(text),
         domain=request.domain,
-        candidate_count=len(_PROPOSER_CANDIDATES),
+        candidate_count=len(_ALLOWED_ACTIONS),
     )
-    proposal = llm_provider.propose(text=text, domain=request.domain, candidates=_PROPOSER_CANDIDATES, context=request.context)
+    proposal = llm_provider.propose(text=text, domain=request.domain, candidates=_ALLOWED_ACTIONS, context=request.context)
     audit_event(
         "llm.propose.result",
         ok=proposal.ok,
         action=proposal.action,
         confidence=proposal.confidence,
         reason=safe_excerpt(proposal.reason, max_len=120),
+        selected_model=proposal.selected_model,
     )
+
+    if not proposal.llm_used and proposal.reason in {"ollama_unreachable", "ollama_no_model", "provider_stub", "llm_disabled"}:
+        response = _unknown_intent_response(text)
+        _log_orchestration_decision(
+            mode="deterministic",
+            llm_used=False,
+            selected_model=proposal.selected_model,
+            action="noop",
+            confidence=0.0,
+            executed=False,
+            error_type=response.error,
+        )
+        return response
 
     validated_intent = _validate_proposal(proposal)
     if validated_intent is None:
-        return _unknown_intent_response(text)
+        response = _clarify_response(proposal.clarify_question)
+        _log_orchestration_decision(
+            mode="llm_proposal",
+            llm_used=proposal.llm_used,
+            selected_model=proposal.selected_model,
+            action=proposal.action or "noop",
+            confidence=proposal.confidence,
+            executed=False,
+            error_type=response.error,
+        )
+        return response
+
     validated_intent = validate_intent(validated_intent)
-    if validated_intent.action == "noop":
-        return _unknown_intent_response(text)
+    confidence = validated_intent.confidence
 
-    proposed_action = {
-        "action": validated_intent.action,
-        "args": validated_intent.parameters,
-        "confidence": proposal.confidence,
-        "reason": proposal.reason,
-    }
-    should_autoexec = (
-        config.llm_allow_autoexec
-        and proposal.confidence >= config.llm_autoexec_min_confidence
-        and validated_intent.action in _SAFE_AUTOEXEC_ALLOWLIST
-    )
-
-    if not should_autoexec:
+    if confidence >= config.conf_execute and validated_intent.action != "noop":
+        message, actions = _execute_intent(validated_intent)
+        _log_orchestration_decision(
+            mode="llm_proposal",
+            llm_used=proposal.llm_used,
+            selected_model=proposal.selected_model,
+            action=validated_intent.action,
+            confidence=confidence,
+            executed=True,
+            error_type=None,
+        )
         return OrchestrateResponse(
             intent=validated_intent,
-            message="Proposed action available for confirmation.",
+            message=message,
+            actions=actions,
+            mode="llm_proposal",
+            proposed_action={
+                "action": validated_intent.action,
+                "parameters": validated_intent.parameters,
+                "confidence": confidence,
+            },
+            executed=True,
+            result=actions[0].result if actions else None,
+        )
+
+    if confidence >= config.conf_propose:
+        response = OrchestrateResponse(
+            intent=validated_intent,
+            message="I can do this next. Please approve execution.",
             actions=[],
             mode="llm_proposal",
-            proposed_action=proposed_action,
+            proposed_action={
+                "action": validated_intent.action,
+                "parameters": validated_intent.parameters,
+                "confidence": confidence,
+            },
             executed=False,
             result=None,
         )
+        _log_orchestration_decision(
+            mode="llm_proposal",
+            llm_used=proposal.llm_used,
+            selected_model=proposal.selected_model,
+            action=validated_intent.action,
+            confidence=confidence,
+            executed=False,
+            error_type=None,
+        )
+        return response
 
-    message, actions = _execute_intent(validated_intent)
-    result_payload = actions[0].result if actions else None
-    return OrchestrateResponse(
-        intent=validated_intent,
-        message=message,
-        actions=actions,
-        mode="llm_proposal",
-        proposed_action=proposed_action,
-        executed=True,
-        result=result_payload,
+    response = _clarify_response(
+        proposal.clarify_question
+        or "Do you want memory, finance, files, or camera? For example: 'remember ...' or 'spent 8 on coffee'."
     )
+    _log_orchestration_decision(
+        mode="llm_proposal",
+        llm_used=proposal.llm_used,
+        selected_model=proposal.selected_model,
+        action=validated_intent.action,
+        confidence=confidence,
+        executed=False,
+        error_type=response.error,
+    )
+    return response

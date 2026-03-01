@@ -26,14 +26,14 @@ from victus.ui_state import (
 from adapters.llm.provider import LLMProvider
 from core.camera.models import CameraStatus, CaptureResponse, RecognizeResponse
 from core.camera.service import CameraService
-from core.config import ensure_directories
+from core.config import ensure_directories, get_orchestrator_config
 from core.filesystem.sandbox import FileSandboxError
 from core.filesystem.service import list_sandbox_files, read_sandbox_file, write_sandbox_file
 from core.finance.service import add_transaction, list_transactions, summary
 from core.logging.audit import audit_event, safe_excerpt, text_hash
 from core.logging.logger import get_logger
 from core.memory.service import add_memory, delete_memory, list_recent, search_memories
-from core.orchestrator.router import route_intent
+from core.orchestrator.router import allowed_actions, route_intent
 from core.orchestrator.schemas import OrchestrateErrorResponse, OrchestrateRequest, OrchestrateResponse
 from core.security.auth import login_user, require_user
 from core.security.bootstrap_store import is_bootstrapped, set_bootstrap
@@ -189,6 +189,24 @@ def create_app() -> FastAPI:
     @app.get("/me")
     def me(user: str = Depends(require_user)) -> dict[str, str]:
         return {"username": user}
+
+    @app.get("/debug/orchestrator")
+    def debug_orchestrator(user: str = Depends(require_user)) -> dict[str, object]:
+        _ = user
+        orchestrator_config = get_orchestrator_config()
+        debug_status = llm_provider.debug_status(llm_enabled=orchestrator_config.llm_enabled)
+        return {
+            "llm_enabled": orchestrator_config.llm_enabled,
+            "provider": debug_status["provider"],
+            "selected_model": debug_status["selected_model"],
+            "model_priority": list(orchestrator_config.model_priority),
+            "thresholds": {
+                "execute": orchestrator_config.conf_execute,
+                "propose": orchestrator_config.conf_propose,
+            },
+            "last_error": debug_status.get("last_error"),
+            "allowed_actions": allowed_actions(),
+        }
 
     @app.post(
         "/orchestrate",
