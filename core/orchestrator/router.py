@@ -363,7 +363,10 @@ def route_intent(
     validated_intent = validate_intent(validated_intent)
     confidence = validated_intent.confidence
 
-    if confidence >= config.conf_execute and validated_intent.action != "noop":
+    should_auto_execute = (
+        config.llm_allow_autoexec and confidence >= config.conf_execute and validated_intent.action != "noop"
+    )
+    if should_auto_execute:
         message, actions = _execute_intent(validated_intent)
         _log_orchestration_decision(
             mode="llm_proposal",

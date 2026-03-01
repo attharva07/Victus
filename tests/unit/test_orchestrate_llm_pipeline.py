@@ -80,6 +80,7 @@ def test_orchestrate_force_llm_context(monkeypatch: pytest.MonkeyPatch, tmp_path
 
 
 def test_orchestrate_execute_confident_memory_add(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("VICTUS_LLM_ALLOW_AUTOEXEC", "true")
     monkeypatch.setattr("adapters.llm.provider._http_get_json", lambda *_args, **_kwargs: {"models": [{"name": "mistral"}]})
     monkeypatch.setattr(
         "adapters.llm.provider._http_json",
@@ -100,6 +101,31 @@ def test_orchestrate_execute_confident_memory_add(monkeypatch: pytest.MonkeyPatc
     assert payload["executed"] is True
     memories = list_recent(limit=10)
     assert any(memory["content"] == "paid for lunch" for memory in memories)
+
+
+def test_orchestrate_does_not_autoexecute_when_disabled(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("VICTUS_LLM_ALLOW_AUTOEXEC", "false")
+    monkeypatch.setattr("adapters.llm.provider._http_get_json", lambda *_args, **_kwargs: {"models": [{"name": "mistral"}]})
+    monkeypatch.setattr(
+        "adapters.llm.provider._http_json",
+        lambda *_args, **_kwargs: {
+            "response": json.dumps(
+                {
+                    "action": "memory.add",
+                    "parameters": {"content": "should need approval"},
+                    "confidence": 0.95,
+                }
+            )
+        },
+    )
+    client = _client_with_llm(monkeypatch, tmp_path)
+    response = client.post("/orchestrate", json={"text": "should need approval"}, headers=_auth_headers(client))
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["executed"] is False
+    assert payload["proposed_action"]["action"] == "memory.add"
+    memories = list_recent(limit=10)
+    assert not any(memory["content"] == "should need approval" for memory in memories)
 
 
 def test_model_selection_priority(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
