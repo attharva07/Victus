@@ -37,12 +37,14 @@ def test_deterministic_still_wins(monkeypatch: pytest.MonkeyPatch) -> None:
     assert response.intent.action == "files.list"
 
 
-def test_unknown_intent_unchanged_when_llm_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_chat_fallback_when_llm_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("VICTUS_LLM_ENABLED", raising=False)
     monkeypatch.delenv("VICTUS_ENABLE_LLM_FALLBACK", raising=False)
     response = route_intent(OrchestrateRequest(text="compute the moon phase please now"), _NoopProposer())
-    assert isinstance(response, OrchestrateErrorResponse)
-    assert response.error == "unknown_intent"
+    assert isinstance(response, OrchestrateResponse)
+    assert response.intent.action == "noop"
+    assert response.executed is False
+    assert response.message
 
 
 def test_llm_proposal_returned_not_executed_by_default(
@@ -105,6 +107,8 @@ def test_disallowed_proposal_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     response = route_intent(OrchestrateRequest(text="do something dangerous now"), proposer)
     assert isinstance(response, OrchestrateErrorResponse)
     assert response.error == "unknown_intent"
+
+
 
 
 class _MockHTTPResponse:
@@ -171,3 +175,12 @@ def test_ollama_provider_success_returns_llm_proposal(monkeypatch: pytest.Monkey
     assert response.executed is False
     assert response.proposed_action is not None
     assert response.proposed_action["action"] == "memory.search"
+
+
+def test_non_action_conversation_falls_back_to_chat(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VICTUS_LLM_ENABLED", "true")
+    response = route_intent(OrchestrateRequest(text="hello, how are you?"), _NoopProposer())
+    assert isinstance(response, OrchestrateResponse)
+    assert response.intent.action == "noop"
+    assert response.executed is False
+    assert response.message
