@@ -31,6 +31,11 @@ class OrchestratorConfig:
     llm_provider: str
     llm_allow_autoexec: bool
     llm_autoexec_min_confidence: float
+    conf_execute: float
+    conf_propose: float
+    ollama_base_url: str
+    model_priority: tuple[str, ...]
+    enable_llm_formatting: bool
 
 
 def _default_base_dir() -> Path:
@@ -125,10 +130,17 @@ def get_orchestrator_config() -> OrchestratorConfig:
     # Legacy compatibility: fallback env still enables proposer path if set.
     legacy_fallback = _parse_bool(os.getenv("VICTUS_ENABLE_LLM_FALLBACK"), False)
     llm_provider = os.getenv("VICTUS_LLM_PROVIDER", "stub").strip().lower() or "stub"
+    model_priority_raw = os.getenv("VICTUS_OLLAMA_MODEL_PRIORITY", "mistral,llama3.1:8b")
+    model_priority = tuple(model.strip() for model in model_priority_raw.split(",") if model.strip())
     return OrchestratorConfig(
         enable_llm_fallback=(llm_enabled or legacy_fallback),
         llm_enabled=llm_enabled,
         llm_provider=llm_provider,
         llm_allow_autoexec=_parse_bool(os.getenv("VICTUS_LLM_ALLOW_AUTOEXEC"), False),
         llm_autoexec_min_confidence=_parse_float(os.getenv("VICTUS_LLM_AUTOEXEC_MIN_CONFIDENCE"), 0.90),
+        conf_execute=_parse_float(os.getenv("VICTUS_ORCHESTRATE_CONF_EXECUTE"), 0.75),
+        conf_propose=_parse_float(os.getenv("VICTUS_ORCHESTRATE_CONF_PROPOSE"), 0.45),
+        ollama_base_url=(os.getenv("VICTUS_OLLAMA_BASE_URL", "http://127.0.0.1:11434").strip() or "http://127.0.0.1:11434"),
+        model_priority=model_priority or ("mistral", "llama3.1:8b"),
+        enable_llm_formatting=_parse_bool(os.getenv("VICTUS_ORCHESTRATE_ENABLE_LLM_FORMATTING"), False),
     )
