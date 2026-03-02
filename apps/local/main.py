@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import os
 import secrets
 from pathlib import Path
 from uuid import UUID
@@ -10,9 +11,10 @@ from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request, statu
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from victus.engines import LogicEngine, PersonalityEngine
+from victus.engines.action_registry import ActionRegistry
 
 from victus.ui_state import (
     DialogueSendRequest,
@@ -94,6 +96,27 @@ class CameraCaptureRequest(BaseModel):
 class CameraRecognizeRequest(BaseModel):
     capture_id: str | None = None
     image_b64: str | None = None
+
+
+def _v2_extra_mode() -> str:
+    return "ignore" if os.getenv("VICTUS_V2_EXTRA_MODE") == "ignore" else "forbid"
+
+
+class V2IntentPayload(BaseModel):
+    action: str | None = None
+    parameters: dict[str, object] = Field(default_factory=dict)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class V2OrchestrateRequest(BaseModel):
+    text: str
+    profile: dict[str, object] | None = None
+    intent: V2IntentPayload | None = None
+    action: str | None = None
+    parameters: dict[str, object] = Field(default_factory=dict)
+
+    model_config = ConfigDict(extra=_v2_extra_mode())
 
 
 def _request_id(request: Request) -> str | None:
@@ -234,18 +257,36 @@ def create_app() -> FastAPI:
             raise
 
     @app.post("/orchestrate/v2")
-    def orchestrate_v2(request: Request, payload: dict[str, object], user: str = Depends(require_user)) -> dict[str, object]:
+    def orchestrate_v2(request: Request, payload: V2OrchestrateRequest, user: str = Depends(require_user)) -> dict[str, object]:
         trace_id = _trace_id(request)
         tracer = TraceRecorder(trace_id, route="/orchestrate/v2")
-        tracer.record_stage("request_intake", stage_input={"payload": payload, "user": user})
-        text = str(payload.get("text", "")).strip()
-        profile = payload.get("profile") if isinstance(payload.get("profile"), dict) else {}
+        payload_data = payload.model_dump()
+        tracer.record_stage("request_parsed", stage_input={"payload": payload_data, "user": user})
+        text = payload.text.strip()
+        profile = payload.profile if isinstance(payload.profile, dict) else {}
+        explicit_action: str | None = None
+        explicit_parameters: dict[str, object] = {}
+        source = "none"
+        if payload.intent and payload.intent.action:
+            explicit_action = payload.intent.action
+            explicit_parameters = payload.intent.parameters or {}
+            source = "explicit_intent"
+        elif payload.action:
+            explicit_action = payload.action
+            explicit_parameters = payload.parameters or {}
+            source = "explicit_top_level"
         tracer.record_stage("normalization", stage_output={"text": text, "profile_keys": sorted(profile.keys())})
         logic = LogicEngine()
         personality = PersonalityEngine()
         try:
-            orchestrator_result = logic.run(text, context={"user": user, "trace_id": trace_id, "tracer": tracer})
-            reason = "fallback_unknown" if orchestrator_result.intent.get("action") == "unknown" else None
+            orchestrator_result = logic.run(
+                text,
+                context={"user": user, "trace_id": trace_id, "tracer": tracer},
+                explicit_action=explicit_action,
+                explicit_parameters=explicit_parameters,
+                explicit_source=source,
+            )
+            reason = "fallback_unknown" if orchestrator_result.intent.get("action") == "unknown" else orchestrator_result.policy.reason_code
             tracer.record_stage(
                 "clarification_decision",
                 stage_output={"decision": orchestrator_result.decision},
@@ -259,7 +300,17 @@ def create_app() -> FastAPI:
                 "rendered_result": rendered_result.model_dump(),
             }
             if tracer.debug:
-                response["debug"] = tracer.build_debug_payload(config_flags={"enable_llm_fallback": False})
+                stage_timings = {
+                    stage["stage"]: stage.get("duration_ms")
+                    for stage in tracer.stages
+                    if stage.get("duration_ms") is not None
+                }
+                response["debug"] = {
+                    **tracer.build_debug_payload(config_flags={"enable_llm_fallback": False}),
+                    "resolved_action_source": next((stage.get("output", {}).get("resolver_path") for stage in tracer.stages if stage.get("stage") == "action_resolved"), source),
+                    "list_actions_count": len(ActionRegistry.list_actions()),
+                    "stage_timings": stage_timings,
+                }
             tracer.finalize(response=response, config_flags={"enable_llm_fallback": False})
             return response
         except Exception as exc:  # noqa: BLE001

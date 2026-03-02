@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+import time
 from typing import Any, Dict
 
 from core.observability.trace import ensure_trace_id
@@ -10,37 +11,45 @@ from core.orchestrator.policy import validate_intent
 from core.security.bootstrap_store import is_bootstrapped
 from victus.contracts.orchestrator_result import OrchestratorResult
 from victus.core.intent_router import route_intent
+from victus.engines.action_registry import ActionRegistry
 
 
 class LogicEngine:
-    def run(self, user_text: str, context: dict | None) -> OrchestratorResult:
+    def run(
+        self,
+        user_text: str,
+        context: dict | None,
+        *,
+        explicit_action: str | None = None,
+        explicit_parameters: dict[str, Any] | None = None,
+        explicit_source: str | None = None,
+    ) -> OrchestratorResult:
+        started = time.perf_counter()
         text = user_text.strip()
         active_context, context_ready = self._ensure_context(context)
         trace_id = ensure_trace_id(str(active_context.get("trace_id", "")).strip() or None)
         tracer = active_context.get("tracer")
+        stage_timings: dict[str, float] = {}
 
-        self._debug_log(
-            user_text=text,
-            context_keys=sorted(active_context.keys()),
-            resolver_path="preflight",
-            action="n/a",
-            confidence=0.0,
-        )
+        if tracer is not None:
+            tracer.record_stage("request_parsed", stage_output={"text": text, "explicit_action": explicit_action})
 
-        if not text:
+        self._debug_log(user_text=text, context_keys=sorted(active_context.keys()), resolver_path="preflight", action="n/a", confidence=0.0)
+
+        if not text and not explicit_action:
             return self._build_result(
                 decision="needs_clarification",
                 intent={"action": "clarify", "parameters": {}},
                 confidence=0.2,
                 policy={"allowed": True, "reason_code": "missing_input"},
-                required_inputs=["text"],
+                required_inputs=["action"],
                 trace_id=trace_id,
-                debug_reason="missing_input",
+                debug={"resolved_action_source": "none", "stage_timings_ms": stage_timings},
             )
 
         policy = self._policy_gate(text, active_context)
         if tracer is not None:
-            tracer.record_stage("policy_gate", stage_input={"text": text}, stage_output=policy)
+            tracer.record_stage("policy_checked", stage_input={"text": text}, stage_output=policy)
         if not policy["allowed"]:
             return self._build_result(
                 decision="deny",
@@ -49,50 +58,72 @@ class LogicEngine:
                 policy=policy,
                 required_inputs=[],
                 trace_id=trace_id,
-                debug_reason=policy.get("reason_code"),
+                debug={"resolved_action_source": explicit_source or "heuristic", "stage_timings_ms": stage_timings},
             )
 
-        intent, resolver_path = self._classify_intent(text, active_context)
+        t0 = time.perf_counter()
+        intent, resolver_path = self._resolve_intent(text, explicit_action, explicit_parameters, explicit_source, active_context)
+        stage_timings["action_resolved"] = round((time.perf_counter() - t0) * 1000, 3)
         if tracer is not None:
-            tracer.record_stage("intent_classification", stage_output={"intent": intent, "resolver_path": resolver_path})
+            tracer.record_stage("action_resolved", stage_output={"intent": intent, "resolver_path": resolver_path})
+
         if not context_ready:
             intent["confidence"] = min(float(intent.get("confidence", 0.0)), 0.75)
 
         decision = "allow"
         required_inputs: list[str] = []
-        debug_reason: str | None = None
+        reason_code = "allowed"
+        tool_results: list[dict[str, Any]] = []
 
-        if intent["action"] in {"reminder.create", "reminder.create_draft"}:
-            missing = self._missing_reminder_inputs(intent.get("parameters", {}))
-            if missing:
-                decision = "needs_clarification"
-                required_inputs = missing
-                debug_reason = "missing_required_inputs"
-                if intent["action"] == "reminder.create":
-                    intent["action"] = "reminder.create_draft"
-        elif intent["action"] == "unknown":
+        action = str(intent.get("action", "unknown"))
+        spec = ActionRegistry.get(action) if action != "unknown" else None
+
+        if action == "unknown":
             decision = "needs_clarification"
-            required_inputs = ["clarification"]
-            debug_reason = "fallback_unknown"
+            required_inputs = ["action"]
+            reason_code = "missing_action"
+        elif spec is None:
+            decision = "needs_clarification"
+            required_inputs = ["action"]
+            reason_code = "unknown_action"
+        else:
+            missing_inputs = [field for field in spec.required_inputs if intent.get("parameters", {}).get(field) in (None, "")]
+            if missing_inputs:
+                decision = "needs_clarification"
+                required_inputs = missing_inputs
+                reason_code = "missing_required_inputs"
+            else:
+                t1 = time.perf_counter()
+                result_payload = spec.executor(intent.get("parameters", {}))
+                stage_timings["tool_executed"] = round((time.perf_counter() - t1) * 1000, 3)
+                tool_results = [{"action": action, "result": result_payload}]
+                if tracer is not None:
+                    tracer.record_stage("tool_executed", stage_output={"action": action, "ok": True})
 
         confidence = float(intent.get("confidence", 0.8))
+        stage_timings["total"] = round((time.perf_counter() - started) * 1000, 3)
         if tracer is not None:
-            tracer.record_stage("confidence_scoring", stage_output={"confidence": confidence})
+            tracer.record_stage("rendered", stage_output={"decision": decision, "reason_code": reason_code})
         self._debug_log(
             user_text=text,
             context_keys=sorted(active_context.keys()),
             resolver_path=resolver_path,
-            action=intent["action"],
+            action=action,
             confidence=confidence,
         )
         return self._build_result(
             decision=decision,
-            intent={"action": intent["action"], "parameters": intent.get("parameters", {})},
+            intent={"action": action, "parameters": intent.get("parameters", {})},
             confidence=confidence,
-            policy=policy,
+            policy={"allowed": True, "reason_code": reason_code},
             required_inputs=required_inputs,
             trace_id=trace_id,
-            debug_reason=debug_reason,
+            tool_results=tool_results,
+            debug={
+                "resolved_action_source": resolver_path,
+                "list_actions_count": len(ActionRegistry.list_actions()),
+                "stage_timings_ms": stage_timings,
+            },
         )
 
     def _ensure_context(self, context: dict | None) -> tuple[dict[str, Any], bool]:
@@ -109,102 +140,70 @@ class LogicEngine:
             except Exception:
                 context_ready = False
                 active["bootstrapped"] = False
-
-        if "runtime_context" not in active:
-            try:
-                from victus_local.victus_adapter import _build_context
-
-                active["runtime_context"] = _build_context().model_dump()
-            except Exception:
-                pass
-
         return active, context_ready
 
-    def _classify_intent(self, text: str, context: dict[str, Any]) -> tuple[Dict[str, Any], str]:
-        reminder = self._reminder_fast_path(text)
-        if reminder is not None:
-            return reminder, "rules:reminder_fast_path"
-
-        parser = context.get("deterministic_parser") or parse_intent
-        parsed = parser(text)
-        if parsed is not None:
-            validated = validate_intent(parsed)
+    def _resolve_intent(
+        self,
+        text: str,
+        explicit_action: str | None,
+        explicit_parameters: dict[str, Any] | None,
+        explicit_source: str | None,
+        context: dict[str, Any],
+    ) -> tuple[Dict[str, Any], str]:
+        if explicit_action:
             return {
-                "action": validated.action if validated.action != "noop" else "unknown",
-                "parameters": validated.parameters,
-                "confidence": validated.confidence,
-            }, "classifier:core.orchestrator.deterministic.parse_intent"
+                "action": explicit_action,
+                "parameters": dict(explicit_parameters or {}),
+                "confidence": 1.0,
+            }, explicit_source or "explicit_top_level"
 
-        routed = route_intent(text)
-        if routed is not None:
-            action = "system.status.query" if routed.action == "status" else f"system.{routed.action}"
-            return {"action": action, "parameters": routed.args, "confidence": 0.85}, "rules:victus.core.intent_router"
+        heuristic_intent = self._heuristic_classify(text)
+        if heuristic_intent is not None:
+            return heuristic_intent, "heuristic"
 
+        if os.getenv("VICTUS_ENABLE_LLM_CLASSIFIER") == "1":
+            parser = context.get("deterministic_parser") or parse_intent
+            parsed = parser(text)
+            if parsed is not None:
+                validated = validate_intent(parsed)
+                return {
+                    "action": validated.action if validated.action != "noop" else "unknown",
+                    "parameters": validated.parameters,
+                    "confidence": validated.confidence,
+                }, "llm"
+
+        return {"action": "unknown", "parameters": {}, "confidence": 0.4}, "none"
+
+    def _heuristic_classify(self, text: str) -> Dict[str, Any] | None:
         lowered = text.lower()
-        if any(token in lowered for token in ["status", "health", "uptime"]):
-            return {"action": "system.status.query", "parameters": {}, "confidence": 0.8}, "fallback:status_keywords"
 
-        return {"action": "unknown", "parameters": {}, "confidence": 0.4}, "fallback:unknown"
+        amount_match = re.search(r"\$\s*(\d+(?:\.\d{1,2})?)", lowered)
+        if ("spent" in lowered or "bought" in lowered or "transaction" in lowered) and amount_match:
+            amount = float(amount_match.group(1))
+            merchant = "starbucks" if "starbucks" in lowered else None
+            return {
+                "action": "finance.add_transaction",
+                "parameters": {"amount": amount, "merchant": merchant, "category": "uncategorized"},
+                "confidence": 0.78,
+                "reason": "heuristic",
+            }
 
-    def _reminder_fast_path(self, text: str) -> Dict[str, Any] | None:
-        normalized = " ".join(text.strip().split())
-        lowered = normalized.lower()
-        prefixes = ("add reminder", "set reminder", "remind me")
-        matched_prefix = next((prefix for prefix in prefixes if lowered.startswith(prefix)), None)
-        if not matched_prefix:
-            return None
+        if any(token in lowered for token in ("remind", "tomorrow", " at ", "pm", "am")):
+            return {
+                "action": "reminder.add",
+                "parameters": {"title": text.strip() or "reminder"},
+                "confidence": 0.72,
+                "reason": "heuristic",
+            }
 
-        remainder = normalized[len(matched_prefix) :].strip(" ,")
-        remainder = re.sub(r"^to\s+", "", remainder, flags=re.IGNORECASE)
-
-        date_match = re.search(r"\b(today|tomorrow|next\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday))\b", remainder, flags=re.IGNORECASE)
-        time_match = re.search(r"\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b", remainder, flags=re.IGNORECASE)
-
-        when: Dict[str, str] = {}
-        if date_match:
-            when["date"] = date_match.group(1).lower()
-        if time_match:
-            hour = int(time_match.group(1))
-            minute = int(time_match.group(2) or "0")
-            meridiem = time_match.group(3).lower()
-            if meridiem == "pm" and hour != 12:
-                hour += 12
-            if meridiem == "am" and hour == 12:
-                hour = 0
-            when["time"] = f"{hour:02d}:{minute:02d}:00"
-
-        cleanup_tokens = []
-        if date_match:
-            cleanup_tokens.append(date_match.group(0))
-        if time_match:
-            cleanup_tokens.append(time_match.group(0))
-
-        title = remainder
-        for token in cleanup_tokens:
-            title = re.sub(re.escape(token), "", title, flags=re.IGNORECASE)
-        title = re.sub(r"\s+", " ", title).strip(" ,-.")
-
-        params: Dict[str, Any] = {"title": title or "reminder"}
-        if when:
-            params["when"] = when
-
-        if date_match and time_match:
-            return {"action": "reminder.create", "parameters": params, "confidence": 0.9}
-
-        return {"action": "reminder.create_draft", "parameters": params, "confidence": 0.84}
-
-    def _missing_reminder_inputs(self, params: Dict[str, Any]) -> list[str]:
-        when = params.get("when") if isinstance(params.get("when"), dict) else {}
-        missing: list[str] = []
-        has_date = bool(when.get("date"))
-        has_time = bool(when.get("time"))
-        if has_time and not has_date:
-            missing.append("date")
-        elif has_date and not has_time:
-            missing.append("time")
-        elif not has_date and not has_time:
-            missing.extend(["date", "time"])
-        return missing
+        if "remember" in lowered or "find memory" in lowered or "memory" in lowered:
+            return {
+                "action": "memory.search",
+                "parameters": {"query": text.strip()},
+                "confidence": 0.7,
+                "reason": "heuristic",
+            }
+        return None
 
     def _policy_gate(self, text: str, _context: dict) -> Dict[str, Any]:
         lowered = text.lower()
@@ -241,18 +240,17 @@ class LogicEngine:
         policy: Dict[str, Any],
         required_inputs: list[str],
         trace_id: str,
-        debug_reason: str | None = None,
+        tool_results: list[dict[str, Any]] | None = None,
+        debug: dict[str, Any] | None = None,
     ) -> OrchestratorResult:
         if not policy.get("allowed", True):
             decision = "deny"
             required_inputs = []
         elif decision == "allow":
             required_inputs = []
-        elif decision == "needs_clarification" and not required_inputs:
-            required_inputs = ["clarification"]
 
         action = str(intent.get("action", "unknown"))
-        return OrchestratorResult(
+        result = OrchestratorResult(
             trace_id=trace_id,
             decision=decision,
             intent={"action": action, "parameters": intent.get("parameters", {})},
@@ -266,8 +264,11 @@ class LogicEngine:
                 "safe_fields": ["action", "parameters", "confidence", "reason_code"],
                 "redactions": ["sensitive_terms"] if decision == "deny" else [],
             },
-            tool_results=[],
+            tool_results=tool_results or [],
         )
+        if debug is not None:
+            result.ui_hints.safe_fields.append("debug")
+        return result
 
     def _debug_log(self, *, user_text: str, context_keys: list[str], resolver_path: str, action: str, confidence: float) -> None:
         if os.getenv("LOGIC_DEBUG") != "1":

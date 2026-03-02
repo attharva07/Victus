@@ -91,6 +91,36 @@ npm test
 See `CLEANUP_REPORT.md` for full removal and quarantine rationale.
 
 
+
+## /orchestrate/v2 request examples
+
+Explicit top-level action:
+```json
+{
+  "text": "",
+  "action": "finance.add_transaction",
+  "parameters": {"amount": 6, "category": "coffee", "merchant": "Starbucks"}
+}
+```
+
+Nested intent action:
+```json
+{
+  "text": "",
+  "intent": {
+    "action": "finance.add_transaction",
+    "parameters": {"amount": 12.5, "category": "food"}
+  }
+}
+```
+
+Pure text (heuristic fallback):
+```json
+{
+  "text": "I spent $6 at Starbucks"
+}
+```
+
 ## Debugging orchestration traces
 
 - Set `VICTUS_DEBUG=1` before starting the API to include a `debug` object in `/orchestrate/v2` responses.

@@ -36,7 +36,7 @@ def test_orchestrate_v2_returns_both_outputs_and_consistent_decision(client: Tes
 
     orch = payload["orchestrator_result"]
     rendered = payload["rendered_result"]
-    assert orch["decision"] == "needs_clarification"
+    assert orch["decision"] == "allow"
     assert rendered["ui_copy_hints"]["decision"] == orch["decision"]
-    assert orch["intent"]["action"] == "reminder.create_draft"
+    assert orch["intent"]["action"] == "reminder.add"
     assert isinstance(rendered["headline"], str)
