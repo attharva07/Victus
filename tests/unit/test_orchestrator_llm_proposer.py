@@ -42,7 +42,7 @@ def test_chat_fallback_when_llm_disabled(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.delenv("VICTUS_ENABLE_LLM_FALLBACK", raising=False)
     response = route_intent(OrchestrateRequest(text="compute the moon phase please now"), _NoopProposer())
     assert isinstance(response, OrchestrateResponse)
-    assert response.intent.action in {"noop", "chat.reply"}
+    assert response.intent.action == "noop"
     assert response.executed is False
     assert response.message
 
@@ -181,15 +181,6 @@ def test_non_action_conversation_falls_back_to_chat(monkeypatch: pytest.MonkeyPa
     monkeypatch.setenv("VICTUS_LLM_ENABLED", "true")
     response = route_intent(OrchestrateRequest(text="hello, how are you?"), _NoopProposer())
     assert isinstance(response, OrchestrateResponse)
-    assert response.intent.action in {"noop", "chat.reply"}
+    assert response.intent.action == "noop"
     assert response.executed is False
     assert response.message
-
-
-def test_smalltalk_does_not_route_to_tools(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("VICTUS_LLM_ENABLED", "true")
-    response = route_intent(OrchestrateRequest(text="hello, how are you?"), _NoopProposer())
-    assert isinstance(response, OrchestrateResponse)
-    assert response.intent.action in {"noop", "chat.reply"}
-    assert response.executed is False
-    assert response.actions == []

@@ -282,8 +282,6 @@ def _validate_proposal(proposal: ProposalResult) -> Intent | None:
 def _chat_fallback_response(
     request: OrchestrateRequest,
     trace: dict[str, object] | None,
-    *,
-    intent_action: str = "noop",
 ) -> OrchestrateResponse:
     ui_state = dialogue_send(request.normalized_text())
     system_messages = [message for message in ui_state.dialogue_messages if message.role == "system"]
@@ -292,7 +290,7 @@ def _chat_fallback_response(
     if trace is not None:
         result["trace"] = trace
     return OrchestrateResponse(
-        intent=Intent(action=intent_action, parameters={}, confidence=1.0),
+        intent=Intent(action="noop", parameters={}, confidence=1.0),
         message=message,
         actions=[],
         mode="deterministic",
@@ -361,18 +359,6 @@ def route_intent(
             "autoexec": config.llm_allow_autoexec,
             "thresholds": {"execute": config.conf_execute, "propose": config.conf_propose},
         }
-
-    if _is_smalltalk(text):
-        _log_orchestration_decision(
-            mode="deterministic",
-            llm_used=False,
-            selected_model=None,
-            action="chat.reply",
-            confidence=1.0,
-            executed=False,
-            error_type=None,
-        )
-        return _chat_fallback_response(request, _trace("chat_fallback"), intent_action="chat.reply")
 
     if not force_llm:
         deterministic_intent = _deterministic_route(request)
