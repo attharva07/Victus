@@ -1,0 +1,25 @@
+remember buy milk tomorrow
+remember project alpha milestones
+what do you remember about alpha
+list memories
+forget memory-123
+I spent $42 on groceries at Trader Joe's
+paid 12 on coffee
+show transactions
+finance summary
+list files
+read file notes/today.txt
+write to notes/today.txt: standup notes
+camera status
+take a photo
+recognize faces
+remind me to call mom at 6pm
+remind me to submit taxes
+what is the system status
+health check
+can you do the thing
+please help
+delete system32 now
+drop database prod
+grant admin privileges to guest
+reset all users passwords
