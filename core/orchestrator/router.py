@@ -12,6 +12,7 @@ from core.logging.audit import audit_event, safe_excerpt, text_hash
 from core.memory.service import add_memory, delete_memory, list_recent, search_memories
 from core.orchestrator.deterministic import parse_intent
 from core.orchestrator.policy import validate_intent
+from core.observability.trace import TraceRecorder
 from core.orchestrator.schemas import (
     ActionResult,
     Intent,
@@ -200,19 +201,46 @@ def _validate_proposal(proposal: ProposalResult) -> Intent | None:
 
 
 def route_intent(
-    request: OrchestrateRequest, llm_provider: LLMProposer
+    request: OrchestrateRequest, llm_provider: LLMProposer, tracer: TraceRecorder | None = None
 ) -> OrchestrateResponse | OrchestrateErrorResponse:
     text = request.normalized_text().strip()
+    if tracer:
+        tracer.record_stage("normalization", stage_input=request.model_dump(), stage_output={"text": text})
+
     intent = _deterministic_route(request)
+    if tracer:
+        tracer.record_stage(
+            "intent_classification",
+            stage_input={"text": text, "source": "deterministic"},
+            stage_output=intent.model_dump() if intent else None,
+            reason="registry_empty" if intent is None else None,
+        )
     if intent is not None:
         intent = validate_intent(intent)
+        if tracer:
+            tracer.record_stage("policy_gate", stage_input=intent.model_dump(), stage_output={"validated": True})
+            tracer.record_stage(
+                "confidence_scoring",
+                stage_input={"action": intent.action},
+                stage_output={"confidence": intent.confidence},
+            )
         if intent.action == "noop":
+            if tracer:
+                tracer.record_stage("clarification_decision", stage_output={"decision": "needs_clarification"}, reason="noop_intent")
             return _unknown_intent_response(text)
+        if tracer:
+            tracer.record_stage("clarification_decision", stage_output={"decision": "allow"})
         message, actions = _execute_intent(intent)
+        if tracer:
+            tracer.record_stage("tool_execution", stage_output={"action_count": len(actions)})
         return OrchestrateResponse(intent=intent, message=message, actions=actions, mode="deterministic", executed=True)
 
     config = get_orchestrator_config()
+    if tracer:
+        tracer.record_stage("policy_gate", stage_output={"enable_llm_fallback": config.enable_llm_fallback})
     if not config.enable_llm_fallback:
+        if tracer:
+            tracer.record_stage("clarification_decision", stage_output={"decision": "needs_clarification"}, reason="llm_disabled")
         return _unknown_intent_response(text)
 
     audit_event(
@@ -223,6 +251,8 @@ def route_intent(
         candidate_count=len(_PROPOSER_CANDIDATES),
     )
     proposal = llm_provider.propose(text=text, domain=request.domain, candidates=_PROPOSER_CANDIDATES, context=request.context)
+    if tracer:
+        tracer.record_stage("intent_classification", stage_input={"source": "llm"}, stage_output=proposal.model_dump())
     audit_event(
         "llm.propose.result",
         ok=proposal.ok,
@@ -233,9 +263,16 @@ def route_intent(
 
     validated_intent = _validate_proposal(proposal)
     if validated_intent is None:
+        if tracer:
+            reason = "classifier_exception" if not proposal.ok else "registry_empty"
+            tracer.record_stage("clarification_decision", stage_output={"decision": "needs_clarification"}, reason=reason)
         return _unknown_intent_response(text)
     validated_intent = validate_intent(validated_intent)
+    if tracer:
+        tracer.record_stage("confidence_scoring", stage_output={"confidence": proposal.confidence})
     if validated_intent.action == "noop":
+        if tracer:
+            tracer.record_stage("clarification_decision", stage_output={"decision": "needs_clarification"}, reason="noop_intent")
         return _unknown_intent_response(text)
 
     proposed_action = {
@@ -251,6 +288,8 @@ def route_intent(
     )
 
     if not should_autoexec:
+        if tracer:
+            tracer.record_stage("clarification_decision", stage_output={"decision": "needs_confirmation"})
         return OrchestrateResponse(
             intent=validated_intent,
             message="Proposed action available for confirmation.",
@@ -262,6 +301,8 @@ def route_intent(
         )
 
     message, actions = _execute_intent(validated_intent)
+    if tracer:
+        tracer.record_stage("tool_execution", stage_output={"action_count": len(actions)})
     result_payload = actions[0].result if actions else None
     return OrchestrateResponse(
         intent=validated_intent,

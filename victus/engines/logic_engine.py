@@ -3,8 +3,8 @@ from __future__ import annotations
 import os
 import re
 from typing import Any, Dict
-from uuid import uuid4
 
+from core.observability.trace import ensure_trace_id
 from core.orchestrator.deterministic import parse_intent
 from core.orchestrator.policy import validate_intent
 from core.security.bootstrap_store import is_bootstrapped
@@ -16,6 +16,9 @@ class LogicEngine:
     def run(self, user_text: str, context: dict | None) -> OrchestratorResult:
         text = user_text.strip()
         active_context, context_ready = self._ensure_context(context)
+        trace_id = ensure_trace_id(str(active_context.get("trace_id", "")).strip() or None)
+        tracer = active_context.get("tracer")
+
         self._debug_log(
             user_text=text,
             context_keys=sorted(active_context.keys()),
@@ -31,9 +34,13 @@ class LogicEngine:
                 confidence=0.2,
                 policy={"allowed": True, "reason_code": "missing_input"},
                 required_inputs=["text"],
+                trace_id=trace_id,
+                debug_reason="missing_input",
             )
 
         policy = self._policy_gate(text, active_context)
+        if tracer is not None:
+            tracer.record_stage("policy_gate", stage_input={"text": text}, stage_output=policy)
         if not policy["allowed"]:
             return self._build_result(
                 decision="deny",
@@ -41,27 +48,36 @@ class LogicEngine:
                 confidence=0.95,
                 policy=policy,
                 required_inputs=[],
+                trace_id=trace_id,
+                debug_reason=policy.get("reason_code"),
             )
 
         intent, resolver_path = self._classify_intent(text, active_context)
+        if tracer is not None:
+            tracer.record_stage("intent_classification", stage_output={"intent": intent, "resolver_path": resolver_path})
         if not context_ready:
             intent["confidence"] = min(float(intent.get("confidence", 0.0)), 0.75)
 
         decision = "allow"
         required_inputs: list[str] = []
+        debug_reason: str | None = None
 
         if intent["action"] in {"reminder.create", "reminder.create_draft"}:
             missing = self._missing_reminder_inputs(intent.get("parameters", {}))
             if missing:
                 decision = "needs_clarification"
                 required_inputs = missing
+                debug_reason = "missing_required_inputs"
                 if intent["action"] == "reminder.create":
                     intent["action"] = "reminder.create_draft"
         elif intent["action"] == "unknown":
             decision = "needs_clarification"
             required_inputs = ["clarification"]
+            debug_reason = "fallback_unknown"
 
         confidence = float(intent.get("confidence", 0.8))
+        if tracer is not None:
+            tracer.record_stage("confidence_scoring", stage_output={"confidence": confidence})
         self._debug_log(
             user_text=text,
             context_keys=sorted(active_context.keys()),
@@ -75,6 +91,8 @@ class LogicEngine:
             confidence=confidence,
             policy=policy,
             required_inputs=required_inputs,
+            trace_id=trace_id,
+            debug_reason=debug_reason,
         )
 
     def _ensure_context(self, context: dict | None) -> tuple[dict[str, Any], bool]:
@@ -222,6 +240,8 @@ class LogicEngine:
         confidence: float,
         policy: Dict[str, Any],
         required_inputs: list[str],
+        trace_id: str,
+        debug_reason: str | None = None,
     ) -> OrchestratorResult:
         if not policy.get("allowed", True):
             decision = "deny"
@@ -233,7 +253,7 @@ class LogicEngine:
 
         action = str(intent.get("action", "unknown"))
         return OrchestratorResult(
-            trace_id=str(uuid4()),
+            trace_id=trace_id,
             decision=decision,
             intent={"action": action, "parameters": intent.get("parameters", {})},
             confidence=confidence,
