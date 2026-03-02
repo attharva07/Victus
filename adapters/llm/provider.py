@@ -150,6 +150,10 @@ def _http_get_json(url: str, timeout: int = 5) -> dict[str, Any]:
 def _select_ollama_model(base_url: str, model_priority: list[str]) -> tuple[str | None, str | None]:
     try:
         tags = _http_get_json(f"{base_url.rstrip('/')}/api/tags")
+    except error.HTTPError as exc:
+        if exc.code == 404:
+            return None, "ollama_no_model"
+        return None, "ollama_unreachable"
     except (error.URLError, TimeoutError):
         return None, "ollama_unreachable"
     except Exception:  # noqa: BLE001
@@ -169,9 +173,40 @@ def _select_ollama_model(base_url: str, model_priority: list[str]) -> tuple[str 
     return None, "ollama_no_model"
 
 
+def _extract_first_json_object(payload_text: str) -> str | None:
+    start = payload_text.find("{")
+    if start < 0:
+        return None
+    depth = 0
+    in_string = False
+    escaped = False
+    for index in range(start, len(payload_text)):
+        char = payload_text[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return payload_text[start : index + 1]
+    return None
+
+
 def _parse_intent_payload(payload_text: str) -> tuple[dict[str, Any] | None, str | None]:
+    json_blob = _extract_first_json_object(payload_text)
+    if json_blob is None:
+        return None, "invalid_json"
     try:
-        parsed = json.loads(payload_text)
+        parsed = json.loads(json_blob)
     except json.JSONDecodeError:
         return None, "invalid_json"
     if not isinstance(parsed, dict):
@@ -212,6 +247,10 @@ def _propose_with_ollama(
     def _run_prompt(prompt_payload: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None, dict[str, Any] | None]:
         try:
             ollama_payload = _http_json(endpoint, prompt_payload, timeout=10)
+        except error.HTTPError as exc:
+            if exc.code == 404:
+                return None, "ollama_no_model", None
+            return None, "ollama_unreachable", None
         except (error.URLError, TimeoutError):
             return None, "ollama_unreachable", None
         except Exception:  # noqa: BLE001
@@ -221,7 +260,7 @@ def _propose_with_ollama(
         return parsed, parse_error, ollama_payload if isinstance(ollama_payload, dict) else None
 
     parsed, parse_error, raw_payload = _run_prompt(request_payload)
-    if parse_error:
+    if parse_error == "invalid_json":
         repair_payload = {
             "model": model,
             "prompt": _repair_prompt(raw_payload.get("response", "") if raw_payload else "", candidates),
@@ -231,8 +270,9 @@ def _propose_with_ollama(
         parsed, parse_error, raw_payload = _run_prompt(repair_payload)
 
     if parse_error or parsed is None:
-        on_error("ollama_invalid_json")
-        return ProposalResult(ok=False, confidence=0.0, reason="ollama_invalid_json", selected_model=model, llm_used=True)
+        reason = "ollama_invalid_json" if parse_error == "invalid_json" else (parse_error or "ollama_invalid_json")
+        on_error(reason)
+        return ProposalResult(ok=False, confidence=0.0, reason=reason, selected_model=model, llm_used=True)
 
     action = parsed.get("action")
     parameters = parsed.get("parameters")

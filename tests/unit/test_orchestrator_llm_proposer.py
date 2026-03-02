@@ -42,7 +42,7 @@ def test_chat_fallback_when_llm_disabled(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.delenv("VICTUS_ENABLE_LLM_FALLBACK", raising=False)
     response = route_intent(OrchestrateRequest(text="compute the moon phase please now"), _NoopProposer())
     assert isinstance(response, OrchestrateResponse)
-    assert response.intent.action == "noop"
+    assert response.intent.action == "chat.reply"
     assert response.executed is False
     assert response.message
 
@@ -63,7 +63,7 @@ def test_llm_proposal_returned_not_executed_by_default(
             reason="parsed user reminder",
         )
     )
-    response = route_intent(OrchestrateRequest(text="please stash this detail"), proposer)
+    response = route_intent(OrchestrateRequest(text="please use the memory tool for this detail"), proposer)
     assert response.mode == "llm_proposal"
     assert response.proposed_action is not None
     assert response.executed is False
@@ -104,7 +104,7 @@ def test_disallowed_proposal_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
             reason="bad action",
         )
     )
-    response = route_intent(OrchestrateRequest(text="do something dangerous now"), proposer)
+    response = route_intent(OrchestrateRequest(text="use the memory tool but do something dangerous"), proposer)
     assert isinstance(response, OrchestrateErrorResponse)
     assert response.error == "unknown_intent"
 
@@ -181,6 +181,67 @@ def test_non_action_conversation_falls_back_to_chat(monkeypatch: pytest.MonkeyPa
     monkeypatch.setenv("VICTUS_LLM_ENABLED", "true")
     response = route_intent(OrchestrateRequest(text="hello, how are you?"), _NoopProposer())
     assert isinstance(response, OrchestrateResponse)
-    assert response.intent.action == "noop"
+    assert response.intent.action == "chat.reply"
     assert response.executed is False
     assert response.message
+
+
+def test_chat_reply_llm_proposal_does_not_crash(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VICTUS_LLM_ENABLED", "true")
+    proposer = _StaticProposer(
+        ProposalResult(
+            ok=True,
+            confidence=0.88,
+            action="chat.reply",
+            args={},
+            reason="smalltalk",
+            llm_used=True,
+        )
+    )
+    response = route_intent(OrchestrateRequest(text="tell me a joke"), proposer)
+    assert isinstance(response, OrchestrateResponse)
+    assert response.intent.action == "chat.reply"
+    assert response.executed is False
+    assert response.message
+
+
+def test_disallowed_proposal_rejected_unknown_intent_not_clarify(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VICTUS_LLM_ENABLED", "true")
+    proposer = _StaticProposer(
+        ProposalResult(ok=True, confidence=0.99, action="totally.bad.action", args={}, reason="bad", llm_used=True)
+    )
+    response = route_intent(OrchestrateRequest(text="run a custom action using memory tools"), proposer)
+    assert isinstance(response, OrchestrateErrorResponse)
+    assert response.error == "unknown_intent"
+
+
+def test_ollama_threshold_and_autoexec_behavior(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("VICTUS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("VICTUS_LLM_ENABLED", "true")
+    monkeypatch.setenv("VICTUS_LLM_CONF_EXECUTE", "0.80")
+    monkeypatch.setenv("VICTUS_LLM_CONF_PROPOSE", "0.45")
+    ensure_directories()
+    proposer = _StaticProposer(
+        ProposalResult(ok=True, confidence=0.85, action="memory.add", args={"content": "water plants"}, llm_used=True)
+    )
+
+    monkeypatch.setenv("VICTUS_LLM_ALLOW_AUTOEXEC", "false")
+    proposed = route_intent(OrchestrateRequest(text="please do something with memory for this note"), proposer)
+    assert isinstance(proposed, OrchestrateResponse)
+    assert proposed.executed is False
+    assert proposed.message == "I can do this next. Please approve execution."
+
+    monkeypatch.setenv("VICTUS_LLM_ALLOW_AUTOEXEC", "true")
+    executed = route_intent(OrchestrateRequest(text="please do something with memory for this note"), proposer)
+    assert isinstance(executed, OrchestrateResponse)
+    assert executed.executed is True
+    assert executed.intent.action == "memory.add"
+
+
+def test_greetings_route_to_chat_reply_deterministically(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VICTUS_LLM_ENABLED", "false")
+    monkeypatch.delenv("VICTUS_ENABLE_LLM_FALLBACK", raising=False)
+    response = route_intent(OrchestrateRequest(text="hello, how are you"), _NoopProposer())
+    assert isinstance(response, OrchestrateResponse)
+    assert response.mode == "deterministic"
+    assert response.intent.action == "chat.reply"

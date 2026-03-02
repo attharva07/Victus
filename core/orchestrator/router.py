@@ -136,6 +136,13 @@ _SMALLTALK_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"^\s*howdy\b", re.IGNORECASE),
 )
 
+_TOOL_DOMAIN_HINTS = {
+    "memory": ("memory", "remember", "recall", "forget"),
+    "finance": ("finance", "spent", "paid", "transaction", "summary", "$"),
+    "files": ("file", "files", "read", "write", "append", "list"),
+    "camera": ("camera", "photo", "picture", "capture", "recognize", "face"),
+}
+
 
 def _is_smalltalk(text: str) -> bool:
     normalized = text.strip()
@@ -146,6 +153,15 @@ def _is_smalltalk(text: str) -> bool:
 
 def _deterministic_route(request: OrchestrateRequest) -> Intent | None:
     return parse_intent(request.normalized_text())
+
+
+def _tool_domains_in_text(text: str) -> list[str]:
+    lowered = text.lower()
+    matches: list[str] = []
+    for domain, hints in _TOOL_DOMAIN_HINTS.items():
+        if any(hint in lowered for hint in hints):
+            matches.append(domain)
+    return matches
 
 
 def _execute_intent(intent: Intent) -> tuple[str, list[ActionResult]]:
@@ -282,6 +298,7 @@ def _validate_proposal(proposal: ProposalResult) -> Intent | None:
 def _chat_fallback_response(
     request: OrchestrateRequest,
     trace: dict[str, object] | None,
+    intent_action: str = "chat.reply",
 ) -> OrchestrateResponse:
     ui_state = dialogue_send(request.normalized_text())
     system_messages = [message for message in ui_state.dialogue_messages if message.role == "system"]
@@ -290,7 +307,7 @@ def _chat_fallback_response(
     if trace is not None:
         result["trace"] = trace
     return OrchestrateResponse(
-        intent=Intent(action="noop", parameters={}, confidence=1.0),
+        intent=Intent(action=intent_action, parameters={}, confidence=1.0),
         message=message,
         actions=[],
         mode="deterministic",
@@ -347,6 +364,7 @@ def route_intent(
     selected_model: str | None = None
     proposal_confidence: float | None = None
     llm_was_called = False
+    decision_path: list[str] = []
 
     def _trace(router_mode: str) -> dict[str, object] | None:
         if not debug_enabled:
@@ -358,11 +376,13 @@ def route_intent(
             "proposal_confidence": proposal_confidence,
             "autoexec": config.llm_allow_autoexec,
             "thresholds": {"execute": config.conf_execute, "propose": config.conf_propose},
+            "decision_path": decision_path,
         }
 
     if not force_llm:
         deterministic_intent = _deterministic_route(request)
         if deterministic_intent is not None and deterministic_intent.confidence >= 1.0:
+            decision_path.append("deterministic:tool_match")
             deterministic_intent = validate_intent(deterministic_intent)
             if deterministic_intent.action != "noop":
                 message, actions = _execute_intent(deterministic_intent)
@@ -384,7 +404,18 @@ def route_intent(
                     result=_response_result(actions, _trace("deterministic")),
                 )
 
+        tool_domains = _tool_domains_in_text(text)
+        if not tool_domains:
+            decision_path.append("deterministic:chat_reply")
+            return _chat_fallback_response(request, _trace("deterministic"), intent_action="chat.reply")
+
+        if len(tool_domains) > 1 or deterministic_intent is None:
+            decision_path.append("deterministic:clarify")
+            if not config.enable_llm_fallback:
+                return _clarify_response("I can help with tools—do you want memory, finance, files, or camera?")
+
     if not config.enable_llm_fallback:
+        decision_path.append("fallback:chat_reply_no_llm")
         _log_orchestration_decision(
             mode="deterministic",
             llm_used=False,
@@ -404,6 +435,7 @@ def route_intent(
         candidate_count=len(_ALLOWED_ACTIONS),
     )
     proposal = llm_provider.propose(text=text, domain=request.domain, candidates=_ALLOWED_ACTIONS, context=request.context)
+    decision_path.append("llm:propose")
     llm_was_called = True
     selected_model = proposal.selected_model
     proposal_confidence = proposal.confidence
@@ -417,6 +449,7 @@ def route_intent(
     )
 
     if not proposal.llm_used and proposal.reason in {"ollama_unreachable", "ollama_no_model", "provider_stub", "llm_disabled"}:
+        decision_path.append("llm:unavailable_chat_reply")
         _log_orchestration_decision(
             mode="deterministic",
             llm_used=llm_was_called,
@@ -429,6 +462,7 @@ def route_intent(
         return _chat_fallback_response(request, _trace("chat_fallback"))
 
     if proposal.action is not None and proposal.action not in _ALLOWED_ACTIONS:
+        decision_path.append("llm:disallowed_action")
         response = _unknown_intent_response(text)
         _log_orchestration_decision(
             mode="llm_proposal",
@@ -443,6 +477,7 @@ def route_intent(
 
     validated_intent = _validate_proposal(proposal)
     if validated_intent is None:
+        decision_path.append("llm:invalid_or_unparseable")
         _log_orchestration_decision(
             mode="llm_proposal",
             llm_used=llm_was_called,
@@ -458,6 +493,7 @@ def route_intent(
     confidence = validated_intent.confidence
 
     if validated_intent.action == "chat.reply":
+        decision_path.append("llm:chat_reply")
         _log_orchestration_decision(
             mode="llm_proposal",
             llm_used=llm_was_called,
@@ -467,12 +503,13 @@ def route_intent(
             executed=False,
             error_type=None,
         )
-        return _chat_fallback_response(request, _trace("chat_fallback"), intent_action="chat.reply")
+        return _chat_fallback_response(request, _trace("llm_proposal"), intent_action="chat.reply")
 
     should_auto_execute = (
         config.llm_allow_autoexec and confidence >= config.conf_execute and validated_intent.action != "noop"
     )
     if should_auto_execute:
+        decision_path.append("llm:auto_execute")
         message, actions = _execute_intent(validated_intent)
         _log_orchestration_decision(
             mode="llm_proposal",
@@ -498,6 +535,7 @@ def route_intent(
         )
 
     if confidence >= config.conf_propose:
+        decision_path.append("llm:proposal_requires_approval")
         response = OrchestrateResponse(
             intent=validated_intent,
             message="I can do this next. Please approve execution.",
@@ -531,4 +569,5 @@ def route_intent(
         executed=False,
         error_type=None,
     )
+    decision_path.append("llm:low_confidence_chat_reply")
     return _chat_fallback_response(request, _trace("chat_fallback"))

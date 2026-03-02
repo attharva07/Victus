@@ -86,6 +86,6 @@ def test_orchestrate_unknown_intent_falls_back_to_dialogue(
     response = client.post("/orchestrate", json={"utterance": "hello"}, headers=headers)
     assert response.status_code == 200
     payload = response.json()
-    assert payload["intent"]["action"] == "noop"
+    assert payload["intent"]["action"] == "chat.reply"
     assert payload["executed"] is False
     assert payload["message"]

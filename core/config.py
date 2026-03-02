@@ -138,8 +138,14 @@ def get_orchestrator_config() -> OrchestratorConfig:
         llm_provider=llm_provider,
         llm_allow_autoexec=_parse_bool(os.getenv("VICTUS_LLM_ALLOW_AUTOEXEC"), False),
         llm_autoexec_min_confidence=_parse_float(os.getenv("VICTUS_LLM_AUTOEXEC_MIN_CONFIDENCE"), 0.90),
-        conf_execute=_parse_float(os.getenv("VICTUS_ORCHESTRATE_CONF_EXECUTE"), 0.75),
-        conf_propose=_parse_float(os.getenv("VICTUS_ORCHESTRATE_CONF_PROPOSE"), 0.45),
+        conf_execute=_parse_float(
+            os.getenv("VICTUS_LLM_CONF_EXECUTE", os.getenv("VICTUS_ORCHESTRATE_CONF_EXECUTE")),
+            0.75,
+        ),
+        conf_propose=_parse_float(
+            os.getenv("VICTUS_LLM_CONF_PROPOSE", os.getenv("VICTUS_ORCHESTRATE_CONF_PROPOSE")),
+            0.45,
+        ),
         ollama_base_url=(os.getenv("VICTUS_OLLAMA_BASE_URL", "http://127.0.0.1:11434").strip() or "http://127.0.0.1:11434"),
         model_priority=model_priority or ("mistral", "llama3.1:8b"),
         enable_llm_formatting=_parse_bool(os.getenv("VICTUS_ORCHESTRATE_ENABLE_LLM_FORMATTING"), False),

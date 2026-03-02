@@ -46,11 +46,11 @@ def test_orchestrate_llm_fallback_returns_intent_not_unknown(monkeypatch: pytest
 
     monkeypatch.setattr("adapters.llm.provider._http_json", _fake_generate)
     client = _client_with_llm(monkeypatch, tmp_path)
-    response = client.post("/orchestrate", json={"text": "got starbucks today"}, headers=_auth_headers(client))
+    response = client.post("/orchestrate", json={"text": "please use memory tool for got starbucks today"}, headers=_auth_headers(client))
     assert response.status_code == 200
     payload = response.json()
     assert "error" not in payload
-    assert payload["intent"]["action"] in {"memory.add", "noop"}
+    assert payload["intent"]["action"] in {"memory.add", "chat.reply"}
     assert payload["mode"] in {"llm_proposal", "deterministic"}
 
 
@@ -119,7 +119,9 @@ def test_orchestrate_does_not_autoexecute_when_disabled(monkeypatch: pytest.Monk
         },
     )
     client = _client_with_llm(monkeypatch, tmp_path)
-    response = client.post("/orchestrate", json={"text": "should need approval"}, headers=_auth_headers(client))
+    response = client.post(
+        "/orchestrate", json={"text": "please use memory tool, should need approval"}, headers=_auth_headers(client)
+    )
     assert response.status_code == 200
     payload = response.json()
     assert payload["executed"] is False
@@ -152,7 +154,7 @@ def test_model_selection_priority(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
     before = debug.json()
     assert before["selected_model"] is None
 
-    response = client.post("/orchestrate", json={"text": "something uncertain"}, headers=headers)
+    response = client.post("/orchestrate", json={"text": "please use memory tool for something uncertain"}, headers=headers)
     assert response.status_code == 200
 
     after = client.get("/debug/orchestrator", headers=headers).json()
