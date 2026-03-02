@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import secrets
 from pathlib import Path
+from uuid import UUID
 
 import bcrypt
 from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request, status
@@ -35,6 +36,7 @@ from core.finance.service import add_transaction, list_transactions, summary
 from core.logging.audit import audit_event, safe_excerpt, text_hash
 from core.logging.logger import get_logger
 from core.memory.service import add_memory, delete_memory, list_recent, search_memories
+from core.observability.trace import TRACE_STORE, TraceRecorder, ensure_trace_id
 from core.orchestrator.router import route_intent
 from core.orchestrator.schemas import OrchestrateErrorResponse, OrchestrateRequest, OrchestrateResponse
 from core.security.auth import login_user, require_user
@@ -96,6 +98,16 @@ class CameraRecognizeRequest(BaseModel):
 
 def _request_id(request: Request) -> str | None:
     return request.headers.get("X-Request-ID") or request.headers.get("X-Request-Id")
+
+
+def _trace_id(request: Request) -> str:
+    raw_id = _request_id(request)
+    if raw_id:
+        try:
+            return str(UUID(raw_id))
+        except ValueError:
+            return raw_id.strip()
+    return ensure_trace_id(None)
 
 
 def create_app() -> FastAPI:
@@ -198,29 +210,70 @@ def create_app() -> FastAPI:
         responses={200: {"model": OrchestrateErrorResponse}},
     )
     def orchestrate(
-        payload: OrchestrateRequest, user: str = Depends(require_user)
+        request: Request, payload: OrchestrateRequest, user: str = Depends(require_user)
     ) -> OrchestrateResponse | OrchestrateErrorResponse:
+        trace_id = _trace_id(request)
+        tracer = TraceRecorder(trace_id, route="/orchestrate")
         user_text = payload.normalized_text()
+        tracer.record_stage("request_intake", stage_input={"user": user, "text": user_text})
         audit_event(
             "orchestrate_requested",
             username=user,
             text_hash=text_hash(user_text),
             text_excerpt=safe_excerpt(user_text),
+            trace_id=trace_id,
         )
-        return route_intent(payload, llm_provider)
+        try:
+            response = route_intent(payload, llm_provider, tracer=tracer)
+            tracer.record_stage("rendering_personality", stage_output={"response_type": type(response).__name__})
+            tracer.finalize(response=response.model_dump(), config_flags={"enable_llm_fallback": True})
+            return response
+        except Exception as exc:  # noqa: BLE001
+            tracer.record_exception("orchestrate_v1", exc, stage_input=payload.model_dump())
+            tracer.finalize(config_flags={"enable_llm_fallback": True})
+            raise
 
     @app.post("/orchestrate/v2")
-    def orchestrate_v2(payload: dict[str, object], user: str = Depends(require_user)) -> dict[str, object]:
+    def orchestrate_v2(request: Request, payload: dict[str, object], user: str = Depends(require_user)) -> dict[str, object]:
+        trace_id = _trace_id(request)
+        tracer = TraceRecorder(trace_id, route="/orchestrate/v2")
+        tracer.record_stage("request_intake", stage_input={"payload": payload, "user": user})
         text = str(payload.get("text", "")).strip()
         profile = payload.get("profile") if isinstance(payload.get("profile"), dict) else {}
+        tracer.record_stage("normalization", stage_output={"text": text, "profile_keys": sorted(profile.keys())})
         logic = LogicEngine()
         personality = PersonalityEngine()
-        orchestrator_result = logic.run(text, context={"user": user})
-        rendered_result = personality.render(orchestrator_result, profile=profile)
-        return {
-            "orchestrator_result": orchestrator_result.to_dict(),
-            "rendered_result": rendered_result.model_dump(),
-        }
+        try:
+            orchestrator_result = logic.run(text, context={"user": user, "trace_id": trace_id, "tracer": tracer})
+            reason = "fallback_unknown" if orchestrator_result.intent.get("action") == "unknown" else None
+            tracer.record_stage(
+                "clarification_decision",
+                stage_output={"decision": orchestrator_result.decision},
+                reason=reason,
+            )
+            rendered_result = personality.render(orchestrator_result, profile=profile)
+            tracer.record_stage("rendering_personality", stage_output=rendered_result.model_dump())
+            response = {
+                "trace_id": trace_id,
+                "orchestrator_result": orchestrator_result.to_dict(),
+                "rendered_result": rendered_result.model_dump(),
+            }
+            if tracer.debug:
+                response["debug"] = tracer.build_debug_payload(config_flags={"enable_llm_fallback": False})
+            tracer.finalize(response=response, config_flags={"enable_llm_fallback": False})
+            return response
+        except Exception as exc:  # noqa: BLE001
+            tracer.record_exception("orchestrate_v2", exc, stage_input={"text": text})
+            tracer.finalize(config_flags={"enable_llm_fallback": False})
+            raise
+
+    @app.get("/debug/trace/{trace_id}")
+    def debug_trace(trace_id: str, user: str = Depends(require_user)) -> dict[str, object]:
+        _ = user
+        trace = TRACE_STORE.get(trace_id)
+        if trace is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="trace_not_found")
+        return {"trace": trace}
 
     @app.post("/memory/add")
     def memory_add(payload: MemoryAddRequest, user: str = Depends(require_user)) -> dict[str, str]:

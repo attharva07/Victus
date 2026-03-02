@@ -89,3 +89,16 @@ npm test
 
 ## Cleanup report
 See `CLEANUP_REPORT.md` for full removal and quarantine rationale.
+
+
+## Debugging orchestration traces
+
+- Set `VICTUS_DEBUG=1` before starting the API to include a `debug` object in `/orchestrate/v2` responses.
+- Send `X-Request-ID` to force a known `trace_id`; otherwise Victus generates one per request.
+- Recent traces are stored in-memory (ring buffer size: 200). Fetch one with:
+
+```bash
+curl -H "Authorization: Bearer <token>" http://127.0.0.1:8000/debug/trace/<trace_id>
+```
+
+In non-debug mode (`VICTUS_DEBUG` unset/0), internal debug stage data is omitted from API responses.
