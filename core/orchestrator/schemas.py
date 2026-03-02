@@ -22,6 +22,7 @@ class OrchestrateRequest(BaseModel):
 class Intent(BaseModel):
     action: Literal[
         "noop",
+        "chat.reply",
         "camera.status",
         "camera.capture",
         "camera.recognize",

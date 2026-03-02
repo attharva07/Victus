@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from pydantic import BaseModel, ValidationError
 
 from adapters.llm.provider import LLMProposer, ProposalResult
@@ -23,6 +25,7 @@ from victus.ui_state.service import dialogue_send
 
 _ALLOWED_ACTIONS = [
     "noop",
+    "chat.reply",
     "camera.status",
     "camera.capture",
     "camera.recognize",
@@ -101,6 +104,10 @@ class _CameraRecognizeArgs(BaseModel):
     pass
 
 
+class _ChatReplyArgs(BaseModel):
+    pass
+
+
 _ARG_SCHEMAS: dict[str, type[BaseModel]] = {
     "memory.add": _MemoryAddArgs,
     "memory.search": _MemorySearchArgs,
@@ -115,7 +122,26 @@ _ARG_SCHEMAS: dict[str, type[BaseModel]] = {
     "camera.status": _CameraStatusArgs,
     "camera.capture": _CameraCaptureArgs,
     "camera.recognize": _CameraRecognizeArgs,
+    "chat.reply": _ChatReplyArgs,
 }
+
+
+
+
+_SMALLTALK_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"^\s*(hi|hello|hey)\b", re.IGNORECASE),
+    re.compile(r"\bhow are you\b", re.IGNORECASE),
+    re.compile(r"\bwhat(?:'s| is) up\b", re.IGNORECASE),
+    re.compile(r"^\s*good (morning|afternoon|evening)\b", re.IGNORECASE),
+    re.compile(r"^\s*howdy\b", re.IGNORECASE),
+)
+
+
+def _is_smalltalk(text: str) -> bool:
+    normalized = text.strip()
+    if not normalized:
+        return False
+    return any(pattern.search(normalized) for pattern in _SMALLTALK_PATTERNS)
 
 
 def _deterministic_route(request: OrchestrateRequest) -> Intent | None:
@@ -430,6 +456,18 @@ def route_intent(
 
     validated_intent = validate_intent(validated_intent)
     confidence = validated_intent.confidence
+
+    if validated_intent.action == "chat.reply":
+        _log_orchestration_decision(
+            mode="llm_proposal",
+            llm_used=llm_was_called,
+            selected_model=proposal.selected_model,
+            action=validated_intent.action,
+            confidence=confidence,
+            executed=False,
+            error_type=None,
+        )
+        return _chat_fallback_response(request, _trace("chat_fallback"), intent_action="chat.reply")
 
     should_auto_execute = (
         config.llm_allow_autoexec and confidence >= config.conf_execute and validated_intent.action != "noop"
