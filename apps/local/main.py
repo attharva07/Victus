@@ -11,6 +11,8 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from victus.engines import LogicEngine, PersonalityEngine
+
 from victus.ui_state import (
     DialogueSendRequest,
     UIState,
@@ -206,6 +208,19 @@ def create_app() -> FastAPI:
             text_excerpt=safe_excerpt(user_text),
         )
         return route_intent(payload, llm_provider)
+
+    @app.post("/orchestrate/v2")
+    def orchestrate_v2(payload: dict[str, object], user: str = Depends(require_user)) -> dict[str, object]:
+        text = str(payload.get("text", "")).strip()
+        profile = payload.get("profile") if isinstance(payload.get("profile"), dict) else {}
+        logic = LogicEngine()
+        personality = PersonalityEngine()
+        orchestrator_result = logic.run(text, context={"user": user})
+        rendered_result = personality.render(orchestrator_result, profile=profile)
+        return {
+            "orchestrator_result": orchestrator_result.to_dict(),
+            "rendered_result": rendered_result.model_dump(),
+        }
 
     @app.post("/memory/add")
     def memory_add(payload: MemoryAddRequest, user: str = Depends(require_user)) -> dict[str, str]:

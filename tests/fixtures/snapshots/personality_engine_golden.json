@@ -1,0 +1,246 @@
+[
+  {
+    "input_action": "memory.add",
+    "profile": {
+      "tone": "friendly",
+      "verbosity": "short"
+    },
+    "output": {
+      "headline": "Ready to proceed: memory.add",
+      "body": "Absolutely \u2014 Policy check passed and confidence is high.",
+      "bullets": [
+        "Action: memory.add"
+      ],
+      "tone_profile": "friendly",
+      "verbosity_level": "short",
+      "ui_copy_hints": {
+        "decision": "allow"
+      }
+    }
+  },
+  {
+    "input_action": "memory.add",
+    "profile": {
+      "tone": "formal",
+      "verbosity": "detailed"
+    },
+    "output": {
+      "headline": "Ready to proceed: memory.add",
+      "body": "Notice: Policy check passed and confidence is high.",
+      "bullets": [
+        "Action: memory.add",
+        "Reason: allowed",
+        "Tone: formal",
+        "Trace: trace-a"
+      ],
+      "tone_profile": "formal",
+      "verbosity_level": "detailed",
+      "ui_copy_hints": {
+        "decision": "allow"
+      }
+    }
+  },
+  {
+    "input_action": "productivity.reminder.create",
+    "profile": {
+      "tone": "friendly",
+      "verbosity": "short"
+    },
+    "output": {
+      "headline": "Ready to proceed: productivity.reminder.create",
+      "body": "Absolutely \u2014 Policy check passed and confidence is high.",
+      "bullets": [
+        "Action: productivity.reminder.create"
+      ],
+      "tone_profile": "friendly",
+      "verbosity_level": "short",
+      "ui_copy_hints": {
+        "decision": "allow"
+      }
+    }
+  },
+  {
+    "input_action": "productivity.reminder.create",
+    "profile": {
+      "tone": "formal",
+      "verbosity": "detailed"
+    },
+    "output": {
+      "headline": "Ready to proceed: productivity.reminder.create",
+      "body": "Notice: Policy check passed and confidence is high.",
+      "bullets": [
+        "Action: productivity.reminder.create",
+        "Reason: allowed",
+        "Tone: formal",
+        "Trace: trace-b"
+      ],
+      "tone_profile": "formal",
+      "verbosity_level": "detailed",
+      "ui_copy_hints": {
+        "decision": "allow"
+      }
+    }
+  },
+  {
+    "input_action": "productivity.reminder.create",
+    "profile": {
+      "tone": "friendly",
+      "verbosity": "short"
+    },
+    "output": {
+      "headline": "Need a bit more detail",
+      "body": "Absolutely \u2014 Please provide: time.",
+      "bullets": [
+        "Missing: time"
+      ],
+      "tone_profile": "friendly",
+      "verbosity_level": "short",
+      "ui_copy_hints": {
+        "decision": "needs_clarification"
+      }
+    }
+  },
+  {
+    "input_action": "productivity.reminder.create",
+    "profile": {
+      "tone": "formal",
+      "verbosity": "detailed"
+    },
+    "output": {
+      "headline": "Need a bit more detail",
+      "body": "Notice: Please provide: time.",
+      "bullets": [
+        "Missing: time",
+        "Tone: formal",
+        "Trace: trace-c"
+      ],
+      "tone_profile": "formal",
+      "verbosity_level": "detailed",
+      "ui_copy_hints": {
+        "decision": "needs_clarification"
+      }
+    }
+  },
+  {
+    "input_action": "blocked",
+    "profile": {
+      "tone": "friendly",
+      "verbosity": "short"
+    },
+    "output": {
+      "headline": "I can\u2019t complete that request",
+      "body": "Absolutely \u2014 This request is blocked by policy (unsafe_action).",
+      "bullets": [
+        "Try a safer alternative."
+      ],
+      "tone_profile": "friendly",
+      "verbosity_level": "short",
+      "ui_copy_hints": {
+        "decision": "deny"
+      }
+    }
+  },
+  {
+    "input_action": "blocked",
+    "profile": {
+      "tone": "formal",
+      "verbosity": "detailed"
+    },
+    "output": {
+      "headline": "I can\u2019t complete that request",
+      "body": "Notice: This request is blocked by policy (unsafe_action).",
+      "bullets": [
+        "Try a safer alternative.",
+        "No action was executed.",
+        "Tone: formal",
+        "Trace: trace-d"
+      ],
+      "tone_profile": "formal",
+      "verbosity_level": "detailed",
+      "ui_copy_hints": {
+        "decision": "deny"
+      }
+    }
+  },
+  {
+    "input_action": "system.status.query",
+    "profile": {
+      "tone": "friendly",
+      "verbosity": "short"
+    },
+    "output": {
+      "headline": "Ready to proceed: system.status.query",
+      "body": "Absolutely \u2014 Policy check passed and confidence is high.",
+      "bullets": [
+        "Action: system.status.query"
+      ],
+      "tone_profile": "friendly",
+      "verbosity_level": "short",
+      "ui_copy_hints": {
+        "decision": "allow"
+      }
+    }
+  },
+  {
+    "input_action": "system.status.query",
+    "profile": {
+      "tone": "formal",
+      "verbosity": "detailed"
+    },
+    "output": {
+      "headline": "Ready to proceed: system.status.query",
+      "body": "Notice: Policy check passed and confidence is high.",
+      "bullets": [
+        "Action: system.status.query",
+        "Reason: allowed",
+        "Tone: formal",
+        "Trace: trace-e"
+      ],
+      "tone_profile": "formal",
+      "verbosity_level": "detailed",
+      "ui_copy_hints": {
+        "decision": "allow"
+      }
+    }
+  },
+  {
+    "input_action": "unknown",
+    "profile": {
+      "tone": "friendly",
+      "verbosity": "short"
+    },
+    "output": {
+      "headline": "Need a bit more detail",
+      "body": "Absolutely \u2014 Please provide: action.",
+      "bullets": [
+        "Missing: action"
+      ],
+      "tone_profile": "friendly",
+      "verbosity_level": "short",
+      "ui_copy_hints": {
+        "decision": "needs_clarification"
+      }
+    }
+  },
+  {
+    "input_action": "unknown",
+    "profile": {
+      "tone": "formal",
+      "verbosity": "detailed"
+    },
+    "output": {
+      "headline": "Need a bit more detail",
+      "body": "Notice: Please provide: action.",
+      "bullets": [
+        "Missing: action",
+        "Tone: formal",
+        "Trace: trace-f"
+      ],
+      "tone_profile": "formal",
+      "verbosity_level": "detailed",
+      "ui_copy_hints": {
+        "decision": "needs_clarification"
+      }
+    }
+  }
+]
