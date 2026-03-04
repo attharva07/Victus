@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime, timezone
 
 from pydantic import BaseModel, ValidationError
 
@@ -22,7 +23,6 @@ from core.orchestrator.schemas import (
     OrchestrateRequest,
     OrchestrateResponse,
 )
-from victus.ui_state.service import dialogue_send
 
 _ALLOWED_ACTIONS = [
     "noop",
@@ -290,35 +290,53 @@ def _clarify_response(question: str | None = None) -> OrchestrateErrorResponse:
 def _validate_proposal(proposal: ProposalResult) -> Intent | None:
     if not proposal.ok or proposal.action is None:
         return None
-    schema = _ARG_SCHEMAS.get(proposal.action)
-    if schema is None:
+    if proposal.action not in _ALLOWED_ACTIONS:
         return None
-    try:
-        parsed_args = schema.model_validate(proposal.args)
-        return Intent(action=proposal.action, parameters=parsed_args.model_dump(), confidence=proposal.confidence)
-    except ValidationError:
-        return None
+    raw_args = proposal.args if isinstance(proposal.args, dict) else {}
+    return Intent(action=proposal.action, parameters=dict(raw_args), confidence=proposal.confidence)
 
 
-def _chat_fallback_response(
-    request: OrchestrateRequest,
-    trace: dict[str, object] | None,
-    intent_action: str = "chat.reply",
-) -> OrchestrateResponse:
-    ui_state = dialogue_send(request.normalized_text())
-    system_messages = [message for message in ui_state.dialogue_messages if message.role == "system"]
-    message = system_messages[-1].text if system_messages else "Thanks for the message."
-    result: dict[str, object] = {"ui_state": ui_state.model_dump()}
+def _noop_response(message: str, trace: dict[str, object] | None) -> OrchestrateResponse:
+    result: dict[str, object] = {}
     if trace is not None:
         result["trace"] = trace
     return OrchestrateResponse(
-        intent=Intent(action=intent_action, parameters={}, confidence=1.0),
+        intent=Intent(action="noop", parameters={}, confidence=0.0),
         message=message,
         actions=[],
         mode="deterministic",
         executed=False,
-        result=result,
+        result=result or None,
     )
+
+
+def _regex_finance_candidate(text: str) -> Intent | None:
+    patterns = (
+        re.compile(r"\b(?:i\s+)?(?:spent|paid)\s+(?P<currency>[$€£])?(?P<amount>\d+(?:\.\d{1,2})?)(?:\s*(?:dollars?|bucks))?\s+(?:at|for|on)\s+(?P<merchant>.+)$", re.IGNORECASE),
+        re.compile(r"\badd\s+transaction\s+(?P<currency>[$€£])?(?P<amount>\d+(?:\.\d{1,2})?)\s+(?:for\s+)?(?P<merchant>.+)$", re.IGNORECASE),
+    )
+    for pattern in patterns:
+        match = pattern.search(text.strip())
+        if not match:
+            continue
+        amount = float(match.group("amount"))
+        merchant = match.group("merchant").strip(" .,!?")
+        if not merchant:
+            continue
+        symbol = (match.groupdict().get("currency") or "$").strip()
+        currency = {"$": "USD", "€": "EUR", "£": "GBP"}.get(symbol, "USD")
+        return Intent(
+            action="finance.add_transaction",
+            parameters={
+                "amount": amount,
+                "merchant": merchant,
+                "category": merchant,
+                "currency": currency,
+                "occurred_at": datetime.now(tz=timezone.utc).isoformat(),
+            },
+            confidence=0.92,
+        )
+    return None
 
 
 def _response_result(
@@ -456,16 +474,48 @@ def route_intent(
                         error="unknown_intent",
                         message=message if isinstance(message, str) else "Unsupported explicit action.",
                     )
-            deterministic_intent = validate_intent(deterministic_intent)
-            if deterministic_intent.action != "noop":
-                selected_intent, cognition_meta = _apply_cognitive_layer(
-                    intent=deterministic_intent,
-                    text=text,
-                    context=request.context,
-                    decision_path=decision_path,
+            selected_intent, cognition_meta = _apply_cognitive_layer(
+                intent=deterministic_intent,
+                text=text,
+                context=request.context,
+                decision_path=decision_path,
+            )
+            if selected_intent is not None:
+                selected_intent = validate_intent(selected_intent)
+            if selected_intent is not None and selected_intent.action != "noop":
+                message, actions = _execute_intent(selected_intent)
+                _log_orchestration_decision(
+                    mode="deterministic",
+                    llm_used=False,
+                    selected_model=None,
+                    action=selected_intent.action,
+                    confidence=selected_intent.confidence,
+                    executed=True,
+                    error_type=None,
                 )
-                if selected_intent is None:
-                    return _clarify_response("I need more detail before I can run an allowed action.")
+                result = _response_result(actions, _trace("deterministic")) or {}
+                result["cognition"] = cognition_meta
+                return OrchestrateResponse(
+                    intent=selected_intent,
+                    message=message,
+                    actions=actions,
+                    mode="deterministic",
+                    executed=True,
+                    result=result,
+                )
+
+        regex_finance_intent = _regex_finance_candidate(text)
+        if regex_finance_intent is not None:
+            decision_path.append("deterministic:regex_finance_candidate")
+            selected_intent, cognition_meta = _apply_cognitive_layer(
+                intent=regex_finance_intent,
+                text=text,
+                context=request.context,
+                decision_path=decision_path,
+            )
+            if selected_intent is not None:
+                selected_intent = validate_intent(selected_intent)
+            if selected_intent is not None and selected_intent.action != "noop":
                 message, actions = _execute_intent(selected_intent)
                 _log_orchestration_decision(
                     mode="deterministic",
@@ -489,8 +539,8 @@ def route_intent(
 
         tool_domains = _tool_domains_in_text(text)
         if not tool_domains:
-            decision_path.append("deterministic:chat_reply")
-            return _chat_fallback_response(request, _trace("deterministic"), intent_action="chat.reply")
+            decision_path.append("deterministic:noop_non_tool")
+            return _noop_response("Please ask for a supported tool action (memory, finance, files, or camera).", _trace("deterministic"))
 
         if len(tool_domains) > 1 or deterministic_intent is None:
             decision_path.append("deterministic:clarify")
@@ -498,7 +548,7 @@ def route_intent(
                 return _clarify_response("I can help with tools—do you want memory, finance, files, or camera?")
 
     if not config.enable_llm_fallback:
-        decision_path.append("fallback:chat_reply_no_llm")
+        decision_path.append("fallback:clarify_no_llm")
         _log_orchestration_decision(
             mode="deterministic",
             llm_used=False,
@@ -508,7 +558,7 @@ def route_intent(
             executed=False,
             error_type=None,
         )
-        return _chat_fallback_response(request, _trace("chat_fallback"))
+        return _noop_response("I need a concrete tool request to continue.", _trace("chat_fallback"))
 
     audit_event(
         "llm.propose.request",
@@ -532,7 +582,7 @@ def route_intent(
     )
 
     if not proposal.llm_used and proposal.reason in {"ollama_unreachable", "ollama_no_model", "provider_stub", "llm_disabled"}:
-        decision_path.append("llm:unavailable_chat_reply")
+        decision_path.append("llm:unavailable_clarify")
         _log_orchestration_decision(
             mode="deterministic",
             llm_used=llm_was_called,
@@ -542,7 +592,7 @@ def route_intent(
             executed=False,
             error_type=None,
         )
-        return _chat_fallback_response(request, _trace("chat_fallback"))
+        return _noop_response("I need a concrete tool request to continue.", _trace("chat_fallback"))
 
     if proposal.action is not None and proposal.action not in _ALLOWED_ACTIONS:
         decision_path.append("llm:disallowed_action")
@@ -558,44 +608,25 @@ def route_intent(
         )
         return response
 
-    validated_intent = _validate_proposal(proposal)
-    if validated_intent is None:
+    proposed_intent = _validate_proposal(proposal)
+    if proposed_intent is None:
         decision_path.append("llm:invalid_or_unparseable")
-        _log_orchestration_decision(
-            mode="llm_proposal",
-            llm_used=llm_was_called,
-            selected_model=proposal.selected_model,
-            action=proposal.action or "noop",
-            confidence=proposal.confidence,
-            executed=False,
-            error_type=None,
-        )
-        return _chat_fallback_response(request, _trace("chat_fallback"))
+        proposed_intent = Intent(action="unknown.action", parameters={}, confidence=proposal.confidence)
 
-    validated_intent = validate_intent(validated_intent)
     selected_intent, cognition_meta = _apply_cognitive_layer(
-        intent=validated_intent,
+        intent=proposed_intent,
         text=text,
         context=request.context,
         decision_path=decision_path,
     )
     if selected_intent is None:
         return _clarify_response("I need clarification because no allowed candidate action remained.")
-    validated_intent = selected_intent
+    validated_intent = validate_intent(selected_intent)
     confidence = validated_intent.confidence
 
     if validated_intent.action == "chat.reply":
-        decision_path.append("llm:chat_reply")
-        _log_orchestration_decision(
-            mode="llm_proposal",
-            llm_used=llm_was_called,
-            selected_model=proposal.selected_model,
-            action=validated_intent.action,
-            confidence=confidence,
-            executed=False,
-            error_type=None,
-        )
-        return _chat_fallback_response(request, _trace("llm_proposal"), intent_action="chat.reply")
+        decision_path.append("llm:chat_reply_blocked")
+        return _clarify_response("Please request a supported tool action instead of open-ended chat.")
 
     should_auto_execute = (
         config.llm_allow_autoexec and confidence >= config.conf_execute and validated_intent.action != "noop"
@@ -661,5 +692,5 @@ def route_intent(
         executed=False,
         error_type=None,
     )
-    decision_path.append("llm:low_confidence_chat_reply")
-    return _chat_fallback_response(request, _trace("chat_fallback"))
+    decision_path.append("llm:low_confidence_noop")
+    return _noop_response("I need a concrete tool request to continue.", _trace("chat_fallback"))

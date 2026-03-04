@@ -37,12 +37,12 @@ def test_deterministic_still_wins(monkeypatch: pytest.MonkeyPatch) -> None:
     assert response.intent.action == "files.list"
 
 
-def test_chat_fallback_when_llm_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_noop_when_llm_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("VICTUS_LLM_ENABLED", raising=False)
     monkeypatch.delenv("VICTUS_ENABLE_LLM_FALLBACK", raising=False)
     response = route_intent(OrchestrateRequest(text="compute the moon phase please now"), _NoopProposer())
     assert isinstance(response, OrchestrateResponse)
-    assert response.intent.action == "chat.reply"
+    assert response.intent.action == "noop"
     assert response.executed is False
     assert response.message
 
@@ -177,16 +177,16 @@ def test_ollama_provider_success_returns_llm_proposal(monkeypatch: pytest.Monkey
     assert response.proposed_action["action"] == "memory.search"
 
 
-def test_non_action_conversation_falls_back_to_chat(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_non_action_conversation_routes_to_noop(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("VICTUS_LLM_ENABLED", "true")
     response = route_intent(OrchestrateRequest(text="hello, how are you?"), _NoopProposer())
     assert isinstance(response, OrchestrateResponse)
-    assert response.intent.action == "chat.reply"
+    assert response.intent.action == "noop"
     assert response.executed is False
     assert response.message
 
 
-def test_chat_reply_llm_proposal_does_not_crash(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_chat_reply_llm_proposal_returns_clarify(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("VICTUS_LLM_ENABLED", "true")
     proposer = _StaticProposer(
         ProposalResult(
@@ -200,7 +200,7 @@ def test_chat_reply_llm_proposal_does_not_crash(monkeypatch: pytest.MonkeyPatch)
     )
     response = route_intent(OrchestrateRequest(text="tell me a joke"), proposer)
     assert isinstance(response, OrchestrateResponse)
-    assert response.intent.action == "chat.reply"
+    assert response.intent.action == "noop"
     assert response.executed is False
     assert response.message
 
@@ -238,13 +238,13 @@ def test_ollama_threshold_and_autoexec_behavior(monkeypatch: pytest.MonkeyPatch,
     assert executed.intent.action == "memory.add"
 
 
-def test_greetings_route_to_chat_reply_deterministically(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_greetings_route_to_noop_deterministically(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("VICTUS_LLM_ENABLED", "false")
     monkeypatch.delenv("VICTUS_ENABLE_LLM_FALLBACK", raising=False)
     response = route_intent(OrchestrateRequest(text="hello, how are you"), _NoopProposer())
     assert isinstance(response, OrchestrateResponse)
     assert response.mode == "deterministic"
-    assert response.intent.action == "chat.reply"
+    assert response.intent.action == "noop"
 
 
 @pytest.mark.parametrize(
@@ -269,3 +269,29 @@ def test_deterministic_finance_transaction_inputs_execute(monkeypatch: pytest.Mo
     assert response.intent.parameters.get("amount") == 6.0
     assert response.intent.parameters.get("merchant") == "Starbucks"
     assert response.executed is True
+
+
+def test_finance_explicit_payload_works_without_debug_context(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("VICTUS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("VICTUS_LLM_ENABLED", "false")
+    ensure_directories()
+
+    response = route_intent(OrchestrateRequest(text="finance.add_transaction: 6 Starbucks", context={}), _NoopProposer())
+
+    assert isinstance(response, OrchestrateResponse)
+    assert response.intent.action == "finance.add_transaction"
+    assert response.executed is True
+
+
+def test_non_chat_request_never_returns_chat_reply_action(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VICTUS_LLM_ENABLED", "true")
+    proposer = _StaticProposer(
+        ProposalResult(ok=True, confidence=0.91, action="chat.reply", args={}, reason="smalltalk", llm_used=True)
+    )
+
+    response = route_intent(OrchestrateRequest(text="I spent $6 at Starbucks"), proposer)
+
+    if isinstance(response, OrchestrateResponse):
+        assert response.intent.action != "chat.reply"
+    else:
+        assert response.error == "clarify"
