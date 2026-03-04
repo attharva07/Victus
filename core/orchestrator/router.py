@@ -442,6 +442,16 @@ def route_intent(
         deterministic_intent = _deterministic_route(request)
         if deterministic_intent is not None and deterministic_intent.confidence >= 1.0:
             decision_path.append("deterministic:tool_match")
+            explicit_error = deterministic_intent.parameters.get("error")
+            if deterministic_intent.action == "noop" and isinstance(explicit_error, str):
+                message = deterministic_intent.parameters.get("message")
+                if explicit_error == "clarify":
+                    return _clarify_response(message if isinstance(message, str) else None)
+                if explicit_error == "unknown_intent":
+                    return OrchestrateErrorResponse(
+                        error="unknown_intent",
+                        message=message if isinstance(message, str) else "Unsupported explicit action.",
+                    )
             deterministic_intent = validate_intent(deterministic_intent)
             if deterministic_intent.action != "noop":
                 selected_intent, cognition_meta = _apply_cognitive_layer(

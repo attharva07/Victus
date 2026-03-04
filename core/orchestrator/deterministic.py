@@ -6,8 +6,19 @@ import re
 from pathlib import Path
 from typing import Optional
 
+from core.orchestrator.policy import _ALLOWED_ACTIONS
 from core.orchestrator.schemas import Intent
 from victus.core.confidence import ConfidenceCore, ConfidenceStore, make_key
+
+
+_EXPLICIT_ACTION_WITH_PAYLOAD = re.compile(r"^(?P<action>[a-z]+(?:\.[a-z_]+)+)\s*:\s*(?P<payload>.+)$")
+_EXPLICIT_ACTION_MISSING_PAYLOAD = re.compile(r"^(?P<action>[a-z]+(?:\.[a-z_]+)+)\s*:\s*$")
+_PAYLOAD_FIELD_BY_ACTION: dict[str, str] = {
+    "memory.add": "content",
+    "memory.search": "query",
+    "memory.delete": "id",
+    "files.read": "path",
+}
 
 
 def _normalize(text: str) -> str:
@@ -186,6 +197,60 @@ def _select_domain_intent(utterance: str) -> Optional[Intent]:
 
 
 def parse_intent(utterance: str) -> Optional[Intent]:
+    stripped = utterance.strip()
+    with_payload_match = _EXPLICIT_ACTION_WITH_PAYLOAD.match(stripped)
+    if with_payload_match:
+        action = with_payload_match.group("action")
+        payload = _normalize(with_payload_match.group("payload"))
+        supported_actions = set(_ALLOWED_ACTIONS) | set(_PAYLOAD_FIELD_BY_ACTION)
+        if action not in supported_actions:
+            return Intent(
+                action="noop",
+                parameters={
+                    "error": "unknown_intent",
+                    "message": f"Unsupported explicit action '{action}'.",
+                },
+                confidence=1.0,
+            )
+
+        payload_field = _PAYLOAD_FIELD_BY_ACTION.get(action)
+        if payload_field is None:
+            return Intent(
+                action="noop",
+                parameters={
+                    "error": "clarify",
+                    "message": f"Action '{action}' needs structured parameters; payload form is not supported.",
+                },
+                confidence=1.0,
+            )
+
+        return Intent(action=action, parameters={payload_field: payload}, confidence=1.0)
+
+    missing_payload_match = _EXPLICIT_ACTION_MISSING_PAYLOAD.match(stripped)
+    if missing_payload_match:
+        action = missing_payload_match.group("action")
+        supported_actions = set(_ALLOWED_ACTIONS) | set(_PAYLOAD_FIELD_BY_ACTION)
+        if action not in supported_actions:
+            return Intent(
+                action="noop",
+                parameters={
+                    "error": "unknown_intent",
+                    "message": f"Unsupported explicit action '{action}'.",
+                },
+                confidence=1.0,
+            )
+        payload_field = _PAYLOAD_FIELD_BY_ACTION.get(action, "payload")
+        return Intent(
+            action="noop",
+            parameters={
+                "error": "clarify",
+                "message": f"Please provide '{payload_field}' for action '{action}'.",
+                "action": action,
+                "required_field": payload_field,
+            },
+            confidence=1.0,
+        )
+
     return _select_domain_intent(utterance)
 
 
