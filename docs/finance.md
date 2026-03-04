@@ -25,3 +25,14 @@ Finance v1 is a local-only SQLite logbook for tracking transactions, paychecks, 
 
 ## Logbook export
 Exports a Markdown report with summary totals, transaction table, and category totals for the selected range.
+
+
+## Deterministic orchestrate formats
+The deterministic router supports finance transaction logging from both explicit and natural text forms:
+- `finance.add_transaction: 6 Starbucks`
+- `finance.add_transaction: $6 Starbucks`
+- `add transaction $6 for Starbucks`
+- `I spent $6 at Starbucks`
+- `log $6 Starbucks`
+
+These inputs map to `finance.add_transaction` with structured parameters (`amount`, `merchant`, `category`) and default `currency=USD` plus current UTC `occurred_at` when omitted.

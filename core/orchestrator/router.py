@@ -65,8 +65,10 @@ class _MemoryDeleteArgs(BaseModel):
 
 class _FinanceAddArgs(BaseModel):
     amount: float
-    category: str
+    category: str = "uncategorized"
     merchant: str | None = None
+    currency: str = "USD"
+    occurred_at: str | None = None
 
 
 class _FinanceListArgs(BaseModel):
@@ -225,8 +227,10 @@ def _execute_intent(intent: Intent) -> tuple[str, list[ActionResult]]:
         amount_cents = int(round(float(amount) * 100))
         transaction_id = add_transaction(
             amount_cents=amount_cents,
+            currency=params.get("currency", "USD"),
             category=params.get("category", "uncategorized"),
             merchant=params.get("merchant"),
+            ts=params.get("occurred_at"),
         )
         audit_event("orchestrate_finance_add", transaction_id=transaction_id)
         result = ActionResult(

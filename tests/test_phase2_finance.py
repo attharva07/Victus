@@ -32,19 +32,25 @@ def test_finance_endpoints_require_auth(monkeypatch: pytest.MonkeyPatch, tmp_pat
 
 
 @pytest.mark.parametrize(
-    ("utterance", "amount", "category"),
+    ("utterance", "amount", "category", "merchant"),
     [
-        ("spent 3 on coffee", 3.0, "coffee"),
-        ("I spent $3 on coffee at Starbucks", 3.0, "coffee"),
-        ("paid 12.50 for groceries", 12.5, "groceries"),
+        ("spent 3 on coffee", 3.0, "coffee", None),
+        ("I spent $3 on coffee at Starbucks", 3.0, "coffee", "starbucks"),
+        ("paid 12.50 for groceries", 12.5, "groceries", "groceries"),
+        ("add transaction $6 for Starbucks", 6.0, "Starbucks", "Starbucks"),
+        ("I spent $6 at Starbucks", 6.0, "Starbucks", "Starbucks"),
+        ("log $6 Starbucks", 6.0, "Starbucks", "Starbucks"),
     ],
 )
-def test_finance_deterministic_parsing(utterance: str, amount: float, category: str) -> None:
+def test_finance_deterministic_parsing(utterance: str, amount: float, category: str, merchant: str | None) -> None:
     intent = parse_finance_intent(utterance)
     assert intent is not None
     assert intent.action == "finance.add_transaction"
     assert intent.parameters["amount"] == amount
     assert intent.parameters["category"] == category
+    assert intent.parameters.get("merchant") == merchant
+    assert intent.parameters.get("currency") == "USD"
+    assert intent.parameters.get("occurred_at")
 
 
 def test_finance_add_list_summary(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
