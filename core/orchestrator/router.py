@@ -462,6 +462,7 @@ def route_intent(
 
     if not force_llm:
         deterministic_intent = _deterministic_route(request)
+        cognition_meta: dict[str, object] | None = None
         if deterministic_intent is not None and deterministic_intent.confidence >= 1.0:
             decision_path.append("deterministic:tool_match")
             explicit_error = deterministic_intent.parameters.get("error")
@@ -503,6 +504,10 @@ def route_intent(
                     executed=True,
                     result=result,
                 )
+            if selected_intent is None and cognition_meta.get("clarify"):
+                clarify = cognition_meta["clarify"]
+                question = clarify.get("question") if isinstance(clarify, dict) else None
+                return _clarify_response(question if isinstance(question, str) else None)
 
         regex_finance_intent = _regex_finance_candidate(text)
         if regex_finance_intent is not None:
@@ -536,13 +541,54 @@ def route_intent(
                     executed=True,
                     result=result,
                 )
+            if selected_intent is None and cognition_meta.get("clarify"):
+                clarify = cognition_meta["clarify"]
+                question = clarify.get("question") if isinstance(clarify, dict) else None
+                return _clarify_response(question if isinstance(question, str) else None)
 
         tool_domains = _tool_domains_in_text(text)
         if not tool_domains:
             decision_path.append("deterministic:noop_non_tool")
             return _noop_response("Please ask for a supported tool action (memory, finance, files, or camera).", _trace("deterministic"))
 
-        if len(tool_domains) > 1 or deterministic_intent is None:
+        if deterministic_intent is None and not config.enable_llm_fallback:
+            decision_path.append("deterministic:no_match")
+            selected_intent, cognition_meta = _apply_cognitive_layer(
+                intent=Intent(action="unknown.action", parameters={}, confidence=0.0),
+                text=text,
+                context=request.context,
+                decision_path=decision_path,
+            )
+            if selected_intent is None:
+                question: str | None = None
+                if isinstance(cognition_meta.get("clarify"), dict):
+                    clarify = cognition_meta["clarify"]
+                    question = clarify.get("question") if isinstance(clarify.get("question"), str) else None
+                return _clarify_response(question)
+            selected_intent = validate_intent(selected_intent)
+            if selected_intent.action != "noop":
+                message, actions = _execute_intent(selected_intent)
+                _log_orchestration_decision(
+                    mode="deterministic",
+                    llm_used=False,
+                    selected_model=None,
+                    action=selected_intent.action,
+                    confidence=selected_intent.confidence,
+                    executed=True,
+                    error_type=None,
+                )
+                result = _response_result(actions, _trace("deterministic")) or {}
+                result["cognition"] = cognition_meta
+                return OrchestrateResponse(
+                    intent=selected_intent,
+                    message=message,
+                    actions=actions,
+                    mode="deterministic",
+                    executed=True,
+                    result=result,
+                )
+
+        if len(tool_domains) > 1:
             decision_path.append("deterministic:clarify")
             if not config.enable_llm_fallback:
                 return _clarify_response("I can help with tools—do you want memory, finance, files, or camera?")

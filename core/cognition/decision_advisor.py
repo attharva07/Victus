@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from typing import Any
 
 from core.cognition.models import CandidateAction, DecisionPlan
@@ -69,7 +70,7 @@ class DecisionAdvisor:
 
     def _generate_candidates(self, intent_action: str, intent_params: dict[str, Any], user_text: str) -> list[CandidateAction]:
         candidates: list[CandidateAction] = []
-        if intent_action and isinstance(intent_params, dict):
+        if intent_action and intent_action != "unknown.action" and isinstance(intent_params, dict):
             candidates.append(
                 CandidateAction(
                     action=intent_action,
@@ -89,6 +90,11 @@ class DecisionAdvisor:
         elif intent_action.endswith(".send") or intent_action.startswith("send"):
             candidates.append(self._blank("draft", intent_params, "Create draft before sending."))
 
+        unknown_action = intent_action == "unknown.action" or "." not in intent_action
+        if unknown_action:
+            unknown_candidates = self._unknown_action_candidates(user_text)
+            candidates.extend(unknown_candidates)
+
         if not candidates or intent_action == "unknown.action":
             clarify_params = {
                 "missing": ["target_action", "required_parameters"],
@@ -96,6 +102,101 @@ class DecisionAdvisor:
             }
             candidates.append(self._blank("clarify", clarify_params, "Insufficient or unknown action; request structured clarification."))
         return candidates
+
+    def _unknown_action_candidates(self, user_text: str) -> list[CandidateAction]:
+        lowered = user_text.lower()
+        candidates: list[CandidateAction] = []
+
+        amount = self._extract_amount(user_text)
+        spend_verbs = bool(re.search(r"\b(spent|paid|bought|purchase|purchased|charged)\b", lowered))
+        merchant = self._extract_merchant(user_text)
+        if amount is not None and (spend_verbs or merchant is not None):
+            resolved_merchant = merchant or "unknown"
+            candidates.append(
+                CandidateAction(
+                    action="finance.add_transaction",
+                    parameters={
+                        "amount": amount,
+                        "merchant": resolved_merchant,
+                        "category": resolved_merchant,
+                        "currency": "USD",
+                        "occurred_at": None,
+                    },
+                    score_total=0.0,
+                    score_breakdown={},
+                    rationale="Finance-like language with amount/spend signals.",
+                )
+            )
+
+        if re.search(r"\b(remember|save to memory|add to memory|memory)\b", lowered):
+            content = self._memory_content(user_text)
+            if content:
+                candidates.append(
+                    CandidateAction(
+                        action="memory.add",
+                        parameters={"content": content},
+                        score_total=0.0,
+                        score_breakdown={},
+                        rationale="Memory save phrase detected.",
+                    )
+                )
+
+        if re.search(r"\b(open|read|file|document|show me)\b", lowered) or re.search(r"[A-Za-z]:\\|/|\\", user_text):
+            candidates.append(
+                CandidateAction(
+                    action="files.read",
+                    parameters={"path": ""},
+                    score_total=0.0,
+                    score_breakdown={},
+                    rationale="File/document language detected.",
+                )
+            )
+
+        if re.search(r"\b(camera|scan|recognize|face)\b", lowered):
+            candidates.append(
+                CandidateAction(
+                    action="camera.recognize",
+                    parameters={},
+                    score_total=0.0,
+                    score_breakdown={},
+                    rationale="Camera/recognition language detected.",
+                )
+            )
+        return candidates
+
+    @staticmethod
+    def _extract_amount(text: str) -> float | None:
+        patterns = (
+            re.compile(r"\$\s*(\d+(?:\.\d{1,2})?)", re.IGNORECASE),
+            re.compile(r"(\d+(?:\.\d{1,2})?)\s*\$", re.IGNORECASE),
+            re.compile(r"\b(?:usd)\s*(\d+(?:\.\d{1,2})?)\b", re.IGNORECASE),
+            re.compile(r"\b(\d+(?:\.\d{1,2})?)\s*(?:dollars?|bucks)\b", re.IGNORECASE),
+        )
+        for pattern in patterns:
+            match = pattern.search(text)
+            if match:
+                return float(match.group(1))
+
+        if re.search(r"\b(spent|paid|bought|purchase|purchased|charged)\b", text, re.IGNORECASE):
+            number_match = re.search(r"\b(\d+(?:\.\d{1,2})?)\b", text)
+            if number_match:
+                return float(number_match.group(1))
+        return None
+
+    @staticmethod
+    def _extract_merchant(text: str) -> str | None:
+        at_match = re.search(r"\b(?:at|for)\s+([A-Za-z][\w&\-'. ]{1,40})$", text.strip(), re.IGNORECASE)
+        if at_match:
+            return at_match.group(1).strip(" .,!?")
+        trailing = re.search(r"\b(?:spent|paid|bought|purchase|purchased|charged)\b.*?\$?\d+(?:\.\d{1,2})?\s+([A-Z][\w&\-'.]*)", text)
+        if trailing:
+            return trailing.group(1).strip(" .,!?")
+        return None
+
+    @staticmethod
+    def _memory_content(text: str) -> str:
+        content = re.sub(r"\b(remember|save to memory|add to memory|memory)\b", "", text, flags=re.IGNORECASE).strip(" :")
+        return content or text.strip()
 
     @staticmethod
     def _blank(action: str, params: dict[str, Any], rationale: str) -> CandidateAction:
@@ -157,15 +258,35 @@ class DecisionAdvisor:
         score = 0.55
         if action == intent_action:
             score += 0.30
-        if action.startswith("clarify"):
-            score = 0.45 if intent_action != "unknown.action" else 0.8
         lowered = user_text.lower()
+        if action == "finance.add_transaction" and re.search(r"\b(spent|paid|bought|purchase|purchased|charged|transaction|\$|usd|dollars?|bucks)\b", lowered):
+            score += 0.35
+        if action == "memory.add" and re.search(r"\b(remember|save to memory|add to memory|memory)\b", lowered):
+            score += 0.35
+        if action.startswith("files.") and re.search(r"\b(open|read|file|document|show me)\b", lowered):
+            score += 0.25
+        if action.startswith("camera.") and re.search(r"\b(camera|scan|recognize|face)\b", lowered):
+            score += 0.25
+        if action.startswith("clarify"):
+            if intent_action == "unknown.action" and self._has_strong_tool_signal(lowered):
+                score = 0.05
+            else:
+                score = 0.45 if intent_action != "unknown.action" else 0.8
         exam_week = bool(context.get("exam_week"))
         if exam_week and any(token in action for token in ("study", "reminder", "memory")):
             score += 0.1
         if "remind" in lowered and action.startswith("reminder."):
             score += 0.1
         return max(0.0, min(1.0, score))
+
+
+    @staticmethod
+    def _has_strong_tool_signal(lowered_text: str) -> bool:
+        return bool(
+            re.search(r"\b(remember|save to memory|add to memory|memory|camera|scan|recognize|face|open|read|file|document|show me|transaction)\b", lowered_text)
+            or re.search(r"\b(spent|paid|bought|purchase|purchased|charged|usd|dollars?|bucks)\b", lowered_text)
+            or "$" in lowered_text
+        )
 
     def _reversibility_score(self, action: str) -> float:
         lowered = action.lower()
