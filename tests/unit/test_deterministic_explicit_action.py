@@ -30,3 +30,15 @@ def test_unknown_explicit_action_returns_unsupported_error() -> None:
     assert intent.action == "noop"
     assert intent.parameters.get("error") == "unknown_intent"
     assert "Unsupported explicit action" in str(intent.parameters.get("message", ""))
+
+
+def test_explicit_finance_add_transaction_payload_parses_to_structured_parameters() -> None:
+    intent = parse_intent("finance.add_transaction: $6 Starbucks")
+
+    assert intent is not None
+    assert intent.action == "finance.add_transaction"
+    assert intent.parameters.get("amount") == 6.0
+    assert intent.parameters.get("merchant") == "Starbucks"
+    assert intent.parameters.get("category") == "Starbucks"
+    assert intent.parameters.get("currency") == "USD"
+    assert intent.parameters.get("occurred_at")

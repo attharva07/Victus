@@ -245,3 +245,27 @@ def test_greetings_route_to_chat_reply_deterministically(monkeypatch: pytest.Mon
     assert isinstance(response, OrchestrateResponse)
     assert response.mode == "deterministic"
     assert response.intent.action == "chat.reply"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "finance.add_transaction: 6 Starbucks",
+        "finance.add_transaction: $6 Starbucks",
+        "add transaction $6 for Starbucks",
+        "I spent $6 at Starbucks",
+        "log $6 Starbucks",
+    ],
+)
+def test_deterministic_finance_transaction_inputs_execute(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, text: str) -> None:
+    monkeypatch.setenv("VICTUS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("VICTUS_LLM_ENABLED", "false")
+    ensure_directories()
+
+    response = route_intent(OrchestrateRequest(text=text), _NoopProposer())
+
+    assert isinstance(response, OrchestrateResponse)
+    assert response.intent.action == "finance.add_transaction"
+    assert response.intent.parameters.get("amount") == 6.0
+    assert response.intent.parameters.get("merchant") == "Starbucks"
+    assert response.executed is True
