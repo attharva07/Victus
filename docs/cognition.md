@@ -37,3 +37,6 @@ Deterministic weighted scoring:
 ## Audit Events
 - `cognition.plan` includes `trace_id`, original candidates, policy decisions, and reranked list.
 - `cognition.selection` includes selected action and reason.
+
+## Unknown Action Fallback
+When deterministic parsing cannot map a request (`None`), the router now forwards a placeholder `Intent(action="unknown.action", ...)` into cognition. Cognition can propose supported tool actions (finance/memory/files/camera) from lightweight text heuristics, and policy still allowlists before execution. If no safe candidate wins, the router returns a clarify question from cognition.

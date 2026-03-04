@@ -17,7 +17,7 @@ from core.orchestrator.policy import evaluate_candidates
         ),
         ("reminder.add", {"title": "study"}, "set a reminder", ["reminder.add"]),
         ("file.delete", {"path": "notes.txt"}, "delete the file", ["file.delete", "file.archive", "file.move_to_trash"]),
-        ("unknown.action", {}, "do the thing", ["unknown.action", "clarify"]),
+        ("unknown.action", {}, "do the thing", ["clarify"]),
         ("admin.delete_user", {"user_id": "u1"}, "delete this user", ["admin.delete_user"]),
     ],
 )
@@ -100,3 +100,54 @@ def test_snapshot_like_stable_order_and_scores() -> None:
     for left, right in zip(snapshot, rerun_snapshot, strict=True):
         assert left[1] == pytest.approx(right[1], abs=1e-9)
         assert left[2] == right[2]
+
+
+def test_unknown_action_finance_heuristic_selects_finance_add_transaction() -> None:
+    advisor = DecisionAdvisor()
+    plan = advisor.evaluate(
+        intent_action="unknown.action",
+        intent_params={},
+        user_text="I spent $6 at Starbucks",
+        context={"intent_confidence": 0.9},
+    )
+
+    assert plan.selected is not None
+    assert plan.selected.action == "finance.add_transaction"
+
+
+def test_unknown_action_add_transaction_phrase_selects_finance() -> None:
+    advisor = DecisionAdvisor()
+    plan = advisor.evaluate(
+        intent_action="unknown.action",
+        intent_params={},
+        user_text="add transaction $6 for Starbucks",
+        context={"intent_confidence": 0.9},
+    )
+
+    assert plan.selected is not None
+    assert plan.selected.action == "finance.add_transaction"
+
+
+def test_unknown_action_memory_phrase_selects_memory_add() -> None:
+    advisor = DecisionAdvisor()
+    plan = advisor.evaluate(
+        intent_action="unknown.action",
+        intent_params={},
+        user_text="remember I like dark mode",
+        context={"intent_confidence": 0.9},
+    )
+
+    assert plan.selected is not None
+    assert plan.selected.action == "memory.add"
+
+
+def test_greeting_does_not_trigger_finance_heuristic() -> None:
+    advisor = DecisionAdvisor()
+    plan = advisor.evaluate(
+        intent_action="unknown.action",
+        intent_params={},
+        user_text="hello, how are you?",
+        context={"intent_confidence": 0.9},
+    )
+
+    assert all(candidate.action != "finance.add_transaction" for candidate in plan.candidates)
