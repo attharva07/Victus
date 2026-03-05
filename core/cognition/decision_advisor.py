@@ -3,9 +3,11 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from datetime import datetime, timezone
 from typing import Any
 
 from core.cognition.models import CandidateAction, DecisionPlan
+from core.signals.models import SignalBundle
 
 
 class DecisionAdvisor:
@@ -19,6 +21,85 @@ class DecisionAdvisor:
         "reversibility": 0.10,
         "time": 0.10,
     }
+
+    def build_intent_from_signals(self, signals: SignalBundle, context: dict[str, Any]) -> CandidateAction:
+        _ = context
+        if signals.intent_hint == "finance.add_transaction":
+            missing: list[str] = []
+            if signals.amount is None:
+                missing.append("amount")
+            if signals.merchant is None:
+                missing.append("merchant")
+            if missing:
+                return CandidateAction(
+                    action="clarify",
+                    parameters={
+                        "question": f"I can add this transaction. Please provide: {', '.join(missing)}.",
+                        "required_parameters": missing,
+                    },
+                    score_total=0.0,
+                    score_breakdown={},
+                    rationale="Missing required finance fields from extracted signals.",
+                )
+
+            merchant = signals.merchant.strip()
+            return CandidateAction(
+                action="finance.add_transaction",
+                parameters={
+                    "amount": signals.amount,
+                    "merchant": merchant,
+                    "category": signals.category_hint or merchant,
+                    "currency": signals.currency or "USD",
+                    "occurred_at": datetime.now(tz=timezone.utc).isoformat(),
+                },
+                score_total=0.0,
+                score_breakdown={},
+                rationale="Built finance intent from extracted amount and merchant signals.",
+            )
+
+        if signals.intent_hint == "memory.add":
+            content = str(signals.evidence.get("memory_content") or signals.raw_text).strip()
+            if not content:
+                return CandidateAction(
+                    action="clarify",
+                    parameters={
+                        "question": "What should I store in memory?",
+                        "required_parameters": ["content"],
+                    },
+                    score_total=0.0,
+                    score_breakdown={},
+                    rationale="Missing content for memory.add.",
+                )
+            return CandidateAction(
+                action="memory.add",
+                parameters={"content": content},
+                score_total=0.0,
+                score_breakdown={},
+                rationale="Built memory intent from explicit memory phrase.",
+            )
+
+        if signals.intent_hint == "reminder.add":
+            return CandidateAction(
+                action="clarify",
+                parameters={
+                    "question": "I can help with reminders, but I need title and schedule details.",
+                    "required_parameters": ["title", "schedule"],
+                },
+                score_total=0.0,
+                score_breakdown={},
+                rationale="Reminder tool not implemented in allowed action set.",
+            )
+
+        return CandidateAction(
+            action="clarify",
+            parameters={
+                "question": "Can you clarify whether this is a finance, memory, file, or camera request?",
+                "required_parameters": ["target_action"],
+            },
+            score_total=0.0,
+            score_breakdown={},
+            rationale="No intent hint extracted from signals.",
+        )
 
     def evaluate(
         self,

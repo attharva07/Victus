@@ -16,6 +16,8 @@ from core.logging.audit import audit_event, safe_excerpt, text_hash
 from core.memory.service import add_memory, delete_memory, list_recent, search_memories
 from core.orchestrator.deterministic import parse_intent
 from core.orchestrator.policy import evaluate_candidates, validate_intent
+from core.signals.extractors import extract_signals
+from core.signals.models import SignalBundle
 from core.orchestrator.schemas import (
     ActionResult,
     Intent,
@@ -381,13 +383,22 @@ def _apply_cognitive_layer(
     *,
     intent: Intent,
     text: str,
+    signals: SignalBundle,
     context: dict[str, object],
     decision_path: list[str],
 ) -> tuple[Intent | None, dict[str, object]]:
     advisor = DecisionAdvisor()
+    built = advisor.build_intent_from_signals(signals, dict(context))
+    seed_action = intent.action
+    seed_params = intent.parameters
+    if intent.action in {"unknown.action", "noop"}:
+        seed_action = built.action
+        seed_params = built.parameters
+        decision_path.append(f"cognition:signals_seed:{seed_action}")
+
     plan = advisor.evaluate(
-        intent_action=intent.action,
-        intent_params=intent.parameters,
+        intent_action=seed_action,
+        intent_params=seed_params,
         user_text=text,
         context=dict(context),
     )
@@ -408,7 +419,7 @@ def _apply_cognitive_layer(
     if reranked.selected is None:
         decision_path.append("cognition:no_allowed_candidates")
         audit_event("cognition.selection", trace_id=plan.trace_id, selected_action=None, reason="no_allowed_candidates")
-        return None, {"trace_id": plan.trace_id, "notes": reranked.notes}
+        return None, {"trace_id": plan.trace_id, "notes": reranked.notes, "built_intent": built.model_dump()}
 
     selected = reranked.selected
     reason = "top_allowed_candidate"
@@ -421,17 +432,18 @@ def _apply_cognitive_layer(
     )
     decision_path.append(f"cognition:selected:{selected.action}")
     if selected.action == "clarify":
-        return None, {"trace_id": plan.trace_id, "clarify": selected.parameters, "notes": reranked.notes}
+        return None, {"trace_id": plan.trace_id, "clarify": selected.parameters, "notes": reranked.notes, "built_intent": built.model_dump()}
     schema = _ARG_SCHEMAS.get(selected.action)
     if schema is None:
-        return None, {"trace_id": plan.trace_id, "notes": reranked.notes, "error": "action_not_executable"}
+        return None, {"trace_id": plan.trace_id, "notes": reranked.notes, "error": "action_not_executable", "built_intent": built.model_dump()}
     try:
         parsed_args = schema.model_validate(selected.parameters)
     except ValidationError:
-        return None, {"trace_id": plan.trace_id, "notes": reranked.notes, "error": "invalid_candidate_parameters"}
+        return None, {"trace_id": plan.trace_id, "notes": reranked.notes, "error": "invalid_candidate_parameters", "built_intent": built.model_dump()}
     return Intent(action=selected.action, parameters=parsed_args.model_dump(), confidence=intent.confidence), {
         "trace_id": plan.trace_id,
         "notes": reranked.notes,
+        "built_intent": built.model_dump(),
     }
 
 
@@ -446,6 +458,8 @@ def route_intent(
     proposal_confidence: float | None = None
     llm_was_called = False
     decision_path: list[str] = []
+    signals = extract_signals(text)
+    debug_extras: dict[str, object] = {}
 
     def _trace(router_mode: str) -> dict[str, object] | None:
         if not debug_enabled:
@@ -458,7 +472,11 @@ def route_intent(
             "autoexec": config.llm_allow_autoexec,
             "thresholds": {"execute": config.conf_execute, "propose": config.conf_propose},
             "decision_path": decision_path,
+            **debug_extras,
         }
+
+    if debug_enabled:
+        debug_extras["signals"] = signals.model_dump()
 
     if not force_llm:
         deterministic_intent = _deterministic_route(request)
@@ -479,8 +497,11 @@ def route_intent(
                 intent=deterministic_intent,
                 text=text,
                 context=request.context,
+                signals=signals,
                 decision_path=decision_path,
             )
+            if debug_enabled:
+                debug_extras["cognition"] = cognition_meta
             if selected_intent is not None:
                 selected_intent = validate_intent(selected_intent)
             if selected_intent is not None and selected_intent.action != "noop":
@@ -516,8 +537,11 @@ def route_intent(
                 intent=regex_finance_intent,
                 text=text,
                 context=request.context,
+                signals=signals,
                 decision_path=decision_path,
             )
+            if debug_enabled:
+                debug_extras["cognition"] = cognition_meta
             if selected_intent is not None:
                 selected_intent = validate_intent(selected_intent)
             if selected_intent is not None and selected_intent.action != "noop":
@@ -557,6 +581,7 @@ def route_intent(
                 intent=Intent(action="unknown.action", parameters={}, confidence=0.0),
                 text=text,
                 context=request.context,
+                signals=signals,
                 decision_path=decision_path,
             )
             if selected_intent is None:
@@ -663,8 +688,11 @@ def route_intent(
         intent=proposed_intent,
         text=text,
         context=request.context,
+        signals=signals,
         decision_path=decision_path,
     )
+    if debug_enabled:
+        debug_extras["cognition"] = cognition_meta
     if selected_intent is None:
         return _clarify_response("I need clarification because no allowed candidate action remained.")
     validated_intent = validate_intent(selected_intent)
