@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from core.cognition import DecisionAdvisor
+from core.signals.models import SignalBundle
 from core.orchestrator.policy import evaluate_candidates
 
 
@@ -151,3 +152,51 @@ def test_greeting_does_not_trigger_finance_heuristic() -> None:
     )
 
     assert all(candidate.action != "finance.add_transaction" for candidate in plan.candidates)
+
+
+def test_build_intent_from_signals_finance() -> None:
+    advisor = DecisionAdvisor()
+    signals = SignalBundle(
+        raw_text="I spent $6 at Starbucks",
+        amount=6.0,
+        currency="USD",
+        merchant="Starbucks",
+        category_hint="coffee",
+        intent_hint="finance.add_transaction",
+    )
+
+    built = advisor.build_intent_from_signals(signals, context={})
+
+    assert built.action == "finance.add_transaction"
+    assert built.parameters["amount"] == 6.0
+    assert built.parameters["merchant"] == "Starbucks"
+    assert built.parameters["currency"] == "USD"
+    assert isinstance(built.parameters.get("occurred_at"), str)
+
+
+def test_build_intent_from_signals_memory() -> None:
+    advisor = DecisionAdvisor()
+    signals = SignalBundle(
+        raw_text="remember that I like dark mode",
+        intent_hint="memory.add",
+        evidence={"memory_content": "I like dark mode"},
+    )
+
+    built = advisor.build_intent_from_signals(signals, context={})
+
+    assert built.action == "memory.add"
+    assert built.parameters == {"content": "I like dark mode"}
+
+
+def test_build_intent_from_signals_clarify_on_missing_fields() -> None:
+    advisor = DecisionAdvisor()
+    signals = SignalBundle(
+        raw_text="I spent at Starbucks",
+        merchant="Starbucks",
+        intent_hint="finance.add_transaction",
+    )
+
+    built = advisor.build_intent_from_signals(signals, context={})
+
+    assert built.action == "clarify"
+    assert "amount" in built.parameters["required_parameters"]
