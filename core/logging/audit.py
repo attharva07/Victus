@@ -4,7 +4,7 @@ import hashlib
 from datetime import datetime, timezone
 from typing import Any
 
-from core.logging.logger import get_logger
+from core.logging.logger import log_event
 
 
 def safe_excerpt(value: str, *, max_len: int = 80) -> str:
@@ -19,7 +19,5 @@ def text_hash(value: str) -> str:
 
 
 def audit_event(event: str, **fields: Any) -> None:
-    logger = get_logger()
     timestamp = datetime.now(tz=timezone.utc).isoformat()
-    payload = {"event": event, "timestamp": timestamp, **fields}
-    logger.info("audit %s", payload)
+    log_event("audit", audit_event=event, timestamp=timestamp, **fields)

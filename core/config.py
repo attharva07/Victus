@@ -38,6 +38,15 @@ class OrchestratorConfig:
     enable_llm_formatting: bool
 
 
+@dataclass(frozen=True)
+class SecurityConfig:
+    env: str
+    max_memory_retrieval: int
+    confidence_threshold: float
+    log_redaction_enabled: bool
+    enabled_tools: tuple[str, ...]
+
+
 def _default_base_dir() -> Path:
     override = os.getenv("VICTUS_DATA_DIR")
     if override:
@@ -149,4 +158,33 @@ def get_orchestrator_config() -> OrchestratorConfig:
         ollama_base_url=(os.getenv("VICTUS_OLLAMA_BASE_URL", "http://127.0.0.1:11434").strip() or "http://127.0.0.1:11434"),
         model_priority=model_priority or ("mistral", "llama3.1:8b"),
         enable_llm_formatting=_parse_bool(os.getenv("VICTUS_ORCHESTRATE_ENABLE_LLM_FORMATTING"), False),
+    )
+
+
+def get_security_config() -> SecurityConfig:
+    env = (os.getenv("VICTUS_ENV", "dev").strip().lower() or "dev")
+    if env not in {"dev", "prod"}:
+        env = "dev"
+
+    max_memory_retrieval = _parse_int(os.getenv("VICTUS_MAX_MEMORY_RETRIEVAL"), 5)
+    confidence_threshold = _parse_float(os.getenv("VICTUS_CONFIDENCE_THRESHOLD"), 0.45)
+    log_redaction_enabled = _parse_bool(os.getenv("VICTUS_LOG_REDACTION_ENABLED"), True)
+    enabled_tools_raw = os.getenv(
+        "VICTUS_ENABLED_TOOLS",
+        "camera.status,camera.capture,camera.recognize,memory.add,memory.search,memory.list,memory.delete,"
+        "finance.add_transaction,finance.list_transactions,finance.summary,files.list,files.read,files.write,chat.reply,noop",
+    )
+    enabled_tools = tuple(token.strip() for token in enabled_tools_raw.split(",") if token.strip())
+
+    if env == "prod":
+        max_memory_retrieval = min(max_memory_retrieval, 5)
+        confidence_threshold = max(confidence_threshold, 0.8)
+        log_redaction_enabled = True
+
+    return SecurityConfig(
+        env=env,
+        max_memory_retrieval=max(1, max_memory_retrieval),
+        confidence_threshold=max(0.0, min(1.0, confidence_threshold)),
+        log_redaction_enabled=log_redaction_enabled,
+        enabled_tools=enabled_tools,
     )
