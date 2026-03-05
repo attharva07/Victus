@@ -6,6 +6,7 @@ from pathlib import Path
 
 import bcrypt
 from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request, status
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -35,6 +36,7 @@ from core.logging.logger import get_logger
 from core.memory.service import add_memory, delete_memory, list_recent, search_memories
 from core.orchestrator.router import allowed_actions, route_intent
 from core.orchestrator.schemas import OrchestrateErrorResponse, OrchestrateRequest, OrchestrateResponse
+from core.errors import VictusError, sanitize_exception
 from core.security.auth import login_user, require_user
 from core.security.bootstrap_store import is_bootstrapped, set_bootstrap
 
@@ -65,6 +67,7 @@ class MemoryAddRequest(BaseModel):
     tags: list[str] | None = None
     importance: int = 5
     confidence: float = 0.8
+    sensitivity: str | None = None
 
 
 class FinanceAddRequest(BaseModel):
@@ -100,6 +103,11 @@ def create_app() -> FastAPI:
     ensure_directories()
     get_logger()
     app = FastAPI(title="Victus Local")
+
+    @app.exception_handler(Exception)
+    async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+        err = sanitize_exception(exc)
+        return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content=err.to_response())
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],
@@ -234,6 +242,7 @@ def create_app() -> FastAPI:
             source=user,
             importance=payload.importance,
             confidence=payload.confidence,
+            sensitivity=payload.sensitivity,
         )
         return {"id": memory_id}
 
@@ -303,7 +312,7 @@ def create_app() -> FastAPI:
         try:
             content = read_sandbox_file(path)
         except FileSandboxError as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=VictusError(str(exc)).user_message()) from exc
         return {"content": content}
 
     @app.post("/files/write")
@@ -311,7 +320,7 @@ def create_app() -> FastAPI:
         try:
             write_sandbox_file(payload.path, payload.content, payload.mode)
         except FileSandboxError as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=VictusError(str(exc)).user_message()) from exc
         return {"ok": True}
 
     @app.get("/camera/status", response_model=CameraStatus)

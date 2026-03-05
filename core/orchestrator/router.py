@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timezone
+from typing import Callable
 
 from pydantic import BaseModel, ValidationError
 
@@ -9,7 +10,7 @@ from adapters.llm.provider import LLMProposer, ProposalResult
 from core.camera.errors import CameraError
 from core.cognition import DecisionAdvisor
 from core.camera.service import CameraService
-from core.config import get_orchestrator_config
+from core.config import get_orchestrator_config, get_security_config
 from core.filesystem.service import list_sandbox_files, read_sandbox_file, write_sandbox_file
 from core.finance.service import add_transaction, list_transactions, summary
 from core.logging.audit import audit_event, safe_excerpt, text_hash
@@ -49,16 +50,19 @@ class _MemoryAddArgs(BaseModel):
     content: str
     tags: list[str] | None = None
     importance: int | None = None
+    sensitivity: str | None = None
 
 
 class _MemorySearchArgs(BaseModel):
     query: str = ""
     tags: list[str] | None = None
     limit: int = 10
+    allowed_sensitivity: list[str] | None = None
 
 
 class _MemoryListArgs(BaseModel):
     limit: int = 20
+    allowed_sensitivity: list[str] | None = None
 
 
 class _MemoryDeleteArgs(BaseModel):
@@ -169,101 +173,141 @@ def _tool_domains_in_text(text: str) -> list[str]:
     return matches
 
 
+def _tool_memory_add(params: dict[str, object]) -> tuple[str, dict[str, object]]:
+    importance = params.get("importance")
+    memory_id = add_memory(
+        content=str(params["content"]),
+        tags=params.get("tags") if isinstance(params.get("tags"), list) else None,
+        importance=int(importance) if importance is not None else 5,
+        sensitivity=params.get("sensitivity") if isinstance(params.get("sensitivity"), str) else None,
+    )
+    audit_event("orchestrate_memory_add", memory_id=memory_id)
+    return f"Saved memory {memory_id}.", {"id": memory_id}
+
+
+def _tool_memory_search(params: dict[str, object]) -> tuple[str, dict[str, object]]:
+    results = search_memories(
+        query=str(params.get("query", "")),
+        tags=params.get("tags") if isinstance(params.get("tags"), list) else None,
+        limit=int(params.get("limit", 10)),
+        allowed_sensitivity=params.get("allowed_sensitivity") if isinstance(params.get("allowed_sensitivity"), list) else None,
+    )
+    query = str(params.get("query", ""))
+    latest = ""
+    if results:
+        excerpt = str(results[0].get("content", "")).strip()
+        latest = f" Latest: {safe_excerpt(excerpt, max_len=80)}." if excerpt else ""
+    audit_event("orchestrate_memory_search", query=query)
+    return f"Found {len(results)} memories matching '{query}'.{latest}", {"results": results}
+
+
+def _tool_memory_list(params: dict[str, object]) -> tuple[str, dict[str, object]]:
+    results = list_recent(
+        limit=int(params.get("limit", 20)),
+        allowed_sensitivity=params.get("allowed_sensitivity") if isinstance(params.get("allowed_sensitivity"), list) else None,
+    )
+    audit_event("orchestrate_memory_list", limit=params.get("limit", 20))
+    return f"Listed {len(results)} memories.", {"results": results}
+
+
+def _tool_memory_delete(params: dict[str, object]) -> tuple[str, dict[str, object]]:
+    deleted = delete_memory(memory_id=str(params["id"]))
+    audit_event("orchestrate_memory_delete", memory_id=params["id"], deleted=deleted)
+    return ("Memory deleted." if deleted else "Memory not found."), {"deleted": deleted}
+
+
+_TOOL_REGISTRY: dict[str, Callable[[dict[str, object]], tuple[str, dict[str, object]]]] = {
+    "memory.add": _tool_memory_add,
+    "memory.search": _tool_memory_search,
+    "memory.list": _tool_memory_list,
+    "memory.delete": _tool_memory_delete,
+}
+
+
+def _register_core_tools() -> None:
+    _TOOL_REGISTRY.update(
+        {
+            "camera.status": lambda _p: (lambda s: (f"Camera status: {s.message}", s.model_dump()))(CameraService().status()),
+            "camera.capture": lambda _p: _capture_camera(),
+            "camera.recognize": lambda _p: _recognize_camera(),
+            "finance.add_transaction": _tool_finance_add,
+            "finance.list_transactions": _tool_finance_list,
+            "finance.summary": _tool_finance_summary,
+            "files.list": lambda _p: (lambda files: (f"Listed {len(files)} sandbox files.", {"files": files}))(list_sandbox_files()),
+            "files.read": _tool_files_read,
+            "files.write": _tool_files_write,
+        }
+    )
+
+
+def _capture_camera() -> tuple[str, dict[str, object]]:
+    try:
+        capture = CameraService().capture()
+    except CameraError as exc:
+        return str(exc), {"error": str(exc)}
+    return "Captured an image from the camera.", capture.model_dump()
+
+
+def _recognize_camera() -> tuple[str, dict[str, object]]:
+    try:
+        recognition = CameraService().recognize()
+    except CameraError as exc:
+        return str(exc), {"error": str(exc)}
+    return f"Recognized {len(recognition.matches)} face matches.", recognition.model_dump()
+
+
+def _tool_finance_add(params: dict[str, object]) -> tuple[str, dict[str, object]]:
+    amount_cents = int(round(float(params["amount"]) * 100))
+    transaction_id = add_transaction(
+        amount_cents=amount_cents,
+        currency=params.get("currency", "USD"),
+        category=params.get("category", "uncategorized"),
+        merchant=params.get("merchant"),
+        ts=params.get("occurred_at"),
+    )
+    audit_event("orchestrate_finance_add", transaction_id=transaction_id)
+    amount_usd = amount_cents / 100
+    return f"Recorded ${amount_usd:.2f} in {params.get('category', 'uncategorized')}.", {"id": transaction_id, "amount_cents": amount_cents}
+
+
+def _tool_finance_list(params: dict[str, object]) -> tuple[str, dict[str, object]]:
+    results = list_transactions(limit=params.get("limit", 50), category=params.get("category"))
+    audit_event("orchestrate_finance_list", count=len(results))
+    return f"Listed {len(results)} transactions.", {"results": results}
+
+
+def _tool_finance_summary(params: dict[str, object]) -> tuple[str, dict[str, object]]:
+    report = summary(period=params.get("period", "week"), group_by=params.get("group_by", "category"))
+    audit_event("orchestrate_finance_summary", period=report["period"])
+    return "Generated finance summary.", {"report": report}
+
+
+def _tool_files_read(params: dict[str, object]) -> tuple[str, dict[str, object]]:
+    content = read_sandbox_file(params["path"])
+    return f"Read {params['path']} ({len(content)} chars).", {"content": content}
+
+
+def _tool_files_write(params: dict[str, object]) -> tuple[str, dict[str, object]]:
+    write_sandbox_file(params["path"], params.get("content", ""), params.get("mode", "overwrite"))
+    return f"Wrote {params['path']} using {params.get('mode', 'overwrite')} mode.", {"ok": True}
+
+
+_register_core_tools()
+
+
 def _execute_intent(intent: Intent) -> tuple[str, list[ActionResult]]:
     action = intent.action
     params = intent.parameters
-    if action == "camera.status":
-        service = CameraService()
-        status = service.status()
-        result = ActionResult(action=action, parameters=params, result=status.model_dump())
-        return f"Camera status: {status.message}", [result]
-    if action == "camera.capture":
-        service = CameraService()
-        try:
-            capture = service.capture()
-        except CameraError as exc:
-            result = ActionResult(action=action, parameters=params, result={"error": str(exc)})
-            return str(exc), [result]
-        result = ActionResult(action=action, parameters=params, result=capture.model_dump())
-        return "Captured an image from the camera.", [result]
-    if action == "camera.recognize":
-        service = CameraService()
-        try:
-            recognition = service.recognize()
-        except CameraError as exc:
-            result = ActionResult(action=action, parameters=params, result={"error": str(exc)})
-            return str(exc), [result]
-        result = ActionResult(action=action, parameters=params, result=recognition.model_dump())
-        return f"Recognized {len(recognition.matches)} face matches.", [result]
-    if action == "memory.add":
-        memory_id = add_memory(
-            content=params["content"],
-            tags=params.get("tags"),
-            importance=params.get("importance", 5),
-        )
-        audit_event("orchestrate_memory_add", memory_id=memory_id)
-        result = ActionResult(action=action, parameters=params, result={"id": memory_id})
-        return f"Saved memory {memory_id}.", [result]
-    if action == "memory.search":
-        results = search_memories(query=params.get("query", ""), tags=params.get("tags"), limit=params.get("limit", 10))
-        audit_event("orchestrate_memory_search", query=params.get("query", ""))
-        result = ActionResult(action=action, parameters=params, result={"results": results})
-        query = params.get("query", "")
-        latest = ""
-        if results:
-            excerpt = str(results[0].get("content", "")).strip()
-            latest = f" Latest: {safe_excerpt(excerpt, max_len=80)}." if excerpt else ""
-        return f"Found {len(results)} memories matching '{query}'.{latest}", [result]
-    if action == "memory.list":
-        results = list_recent(limit=params.get("limit", 20))
-        audit_event("orchestrate_memory_list", limit=params.get("limit", 20))
-        result = ActionResult(action=action, parameters=params, result={"results": results})
-        return f"Listed {len(results)} memories.", [result]
-    if action == "memory.delete":
-        deleted = delete_memory(memory_id=params["id"])
-        audit_event("orchestrate_memory_delete", memory_id=params["id"], deleted=deleted)
-        result = ActionResult(action=action, parameters=params, result={"deleted": deleted})
-        return ("Memory deleted." if deleted else "Memory not found."), [result]
-    if action == "finance.add_transaction":
-        amount = params["amount"]
-        amount_cents = int(round(float(amount) * 100))
-        transaction_id = add_transaction(
-            amount_cents=amount_cents,
-            currency=params.get("currency", "USD"),
-            category=params.get("category", "uncategorized"),
-            merchant=params.get("merchant"),
-            ts=params.get("occurred_at"),
-        )
-        audit_event("orchestrate_finance_add", transaction_id=transaction_id)
-        result = ActionResult(
-            action=action,
-            parameters=params,
-            result={"id": transaction_id, "amount_cents": amount_cents},
-        )
-        amount_usd = amount_cents / 100
-        return f"Recorded ${amount_usd:.2f} in {params.get('category', 'uncategorized')}.", [result]
-    if action == "finance.list_transactions":
-        results = list_transactions(limit=params.get("limit", 50), category=params.get("category"))
-        audit_event("orchestrate_finance_list", count=len(results))
-        result = ActionResult(action=action, parameters=params, result={"results": results})
-        return f"Listed {len(results)} transactions.", [result]
-    if action == "finance.summary":
-        report = summary(period=params.get("period", "week"), group_by=params.get("group_by", "category"))
-        audit_event("orchestrate_finance_summary", period=report["period"])
-        result = ActionResult(action=action, parameters=params, result={"report": report})
-        return "Generated finance summary.", [result]
-    if action == "files.list":
-        files = list_sandbox_files()
-        result = ActionResult(action=action, parameters=params, result={"files": files})
-        return f"Listed {len(files)} sandbox files.", [result]
-    if action == "files.read":
-        content = read_sandbox_file(params["path"])
-        result = ActionResult(action=action, parameters=params, result={"content": content})
-        return f"Read {params['path']} ({len(content)} chars).", [result]
-    if action == "files.write":
-        write_sandbox_file(params["path"], params.get("content", ""), params.get("mode", "overwrite"))
-        result = ActionResult(action=action, parameters=params, result={"ok": True})
-        return f"Wrote {params['path']} using {params.get('mode', 'overwrite')} mode.", [result]
+    security_config = get_security_config()
+    enabled_tools = set(security_config.enabled_tools)
+    if action not in enabled_tools:
+        audit_event("tool_registry_blocked", action=action, reason="not_enabled")
+        return "No action executed.", []
+    registry_handler = _TOOL_REGISTRY.get(action)
+    if registry_handler is not None:
+        message, payload = registry_handler(params)
+        return message, [ActionResult(action=action, parameters=params, result=payload)]
+    audit_event("tool_registry_blocked", action=action, reason="unknown_tool")
     return "No action executed.", []
 
 
@@ -451,6 +495,7 @@ def route_intent(
     request: OrchestrateRequest, llm_provider: LLMProposer
 ) -> OrchestrateResponse | OrchestrateErrorResponse:
     config = get_orchestrator_config()
+    security_config = get_security_config()
     text = request.normalized_text().strip()
     force_llm = bool(request.context.get("force_llm"))
     debug_enabled = bool(request.context.get("debug"))
@@ -702,9 +747,9 @@ def route_intent(
         decision_path.append("llm:chat_reply_blocked")
         return _clarify_response("Please request a supported tool action instead of open-ended chat.")
 
-    should_auto_execute = (
-        config.llm_allow_autoexec and confidence >= config.conf_execute and validated_intent.action != "noop"
-    )
+    execute_threshold = max(config.conf_execute, security_config.confidence_threshold)
+    propose_threshold = max(config.conf_propose, security_config.confidence_threshold)
+    should_auto_execute = config.llm_allow_autoexec and confidence >= execute_threshold and validated_intent.action != "noop"
     if should_auto_execute:
         decision_path.append("llm:auto_execute")
         message, actions = _execute_intent(validated_intent)
@@ -731,7 +776,7 @@ def route_intent(
             result=(_response_result(actions, _trace("llm_proposal")) or {}) | {"cognition": cognition_meta},
         )
 
-    if confidence >= config.conf_propose:
+    if confidence >= propose_threshold:
         decision_path.append("llm:proposal_requires_approval")
         response = OrchestrateResponse(
             intent=validated_intent,
