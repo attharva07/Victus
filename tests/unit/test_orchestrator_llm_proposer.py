@@ -37,12 +37,14 @@ def test_deterministic_still_wins(monkeypatch: pytest.MonkeyPatch) -> None:
     assert response.intent.action == "files.list"
 
 
-def test_unknown_intent_unchanged_when_llm_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_noop_when_llm_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("VICTUS_LLM_ENABLED", raising=False)
     monkeypatch.delenv("VICTUS_ENABLE_LLM_FALLBACK", raising=False)
     response = route_intent(OrchestrateRequest(text="compute the moon phase please now"), _NoopProposer())
-    assert isinstance(response, OrchestrateErrorResponse)
-    assert response.error == "unknown_intent"
+    assert isinstance(response, OrchestrateResponse)
+    assert response.intent.action == "noop"
+    assert response.executed is False
+    assert response.message
 
 
 def test_llm_proposal_returned_not_executed_by_default(
@@ -61,7 +63,7 @@ def test_llm_proposal_returned_not_executed_by_default(
             reason="parsed user reminder",
         )
     )
-    response = route_intent(OrchestrateRequest(text="please stash this detail"), proposer)
+    response = route_intent(OrchestrateRequest(text="please use the memory tool for this detail"), proposer)
     assert response.mode == "llm_proposal"
     assert response.proposed_action is not None
     assert response.executed is False
@@ -102,9 +104,11 @@ def test_disallowed_proposal_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
             reason="bad action",
         )
     )
-    response = route_intent(OrchestrateRequest(text="do something dangerous now"), proposer)
+    response = route_intent(OrchestrateRequest(text="use the memory tool but do something dangerous"), proposer)
     assert isinstance(response, OrchestrateErrorResponse)
     assert response.error == "unknown_intent"
+
+
 
 
 class _MockHTTPResponse:
@@ -171,3 +175,143 @@ def test_ollama_provider_success_returns_llm_proposal(monkeypatch: pytest.Monkey
     assert response.executed is False
     assert response.proposed_action is not None
     assert response.proposed_action["action"] == "memory.search"
+
+
+def test_non_action_conversation_routes_to_noop(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VICTUS_LLM_ENABLED", "true")
+    response = route_intent(OrchestrateRequest(text="hello, how are you?"), _NoopProposer())
+    assert isinstance(response, OrchestrateResponse)
+    assert response.intent.action == "noop"
+    assert response.executed is False
+    assert response.message
+
+
+def test_chat_reply_llm_proposal_returns_clarify(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VICTUS_LLM_ENABLED", "true")
+    proposer = _StaticProposer(
+        ProposalResult(
+            ok=True,
+            confidence=0.88,
+            action="chat.reply",
+            args={},
+            reason="smalltalk",
+            llm_used=True,
+        )
+    )
+    response = route_intent(OrchestrateRequest(text="tell me a joke"), proposer)
+    assert isinstance(response, OrchestrateResponse)
+    assert response.intent.action == "noop"
+    assert response.executed is False
+    assert response.message
+
+
+def test_disallowed_proposal_rejected_unknown_intent_not_clarify(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VICTUS_LLM_ENABLED", "true")
+    proposer = _StaticProposer(
+        ProposalResult(ok=True, confidence=0.99, action="totally.bad.action", args={}, reason="bad", llm_used=True)
+    )
+    response = route_intent(OrchestrateRequest(text="run a custom action using memory tools"), proposer)
+    assert isinstance(response, OrchestrateErrorResponse)
+    assert response.error == "unknown_intent"
+
+
+def test_ollama_threshold_and_autoexec_behavior(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("VICTUS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("VICTUS_LLM_ENABLED", "true")
+    monkeypatch.setenv("VICTUS_LLM_CONF_EXECUTE", "0.80")
+    monkeypatch.setenv("VICTUS_LLM_CONF_PROPOSE", "0.45")
+    ensure_directories()
+    proposer = _StaticProposer(
+        ProposalResult(ok=True, confidence=0.85, action="memory.add", args={"content": "water plants"}, llm_used=True)
+    )
+
+    monkeypatch.setenv("VICTUS_LLM_ALLOW_AUTOEXEC", "false")
+    proposed = route_intent(OrchestrateRequest(text="please do something with memory for this note"), proposer)
+    assert isinstance(proposed, OrchestrateResponse)
+    assert proposed.executed is False
+    assert proposed.message == "I can do this next. Please approve execution."
+
+    monkeypatch.setenv("VICTUS_LLM_ALLOW_AUTOEXEC", "true")
+    executed = route_intent(OrchestrateRequest(text="please do something with memory for this note"), proposer)
+    assert isinstance(executed, OrchestrateResponse)
+    assert executed.executed is True
+    assert executed.intent.action == "memory.add"
+
+
+def test_greetings_route_to_noop_deterministically(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VICTUS_LLM_ENABLED", "false")
+    monkeypatch.delenv("VICTUS_ENABLE_LLM_FALLBACK", raising=False)
+    response = route_intent(OrchestrateRequest(text="hello, how are you"), _NoopProposer())
+    assert isinstance(response, OrchestrateResponse)
+    assert response.mode == "deterministic"
+    assert response.intent.action == "noop"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "finance.add_transaction: 6 Starbucks",
+        "finance.add_transaction: $6 Starbucks",
+        "add transaction $6 for Starbucks",
+        "I spent $6 at Starbucks",
+        "log $6 Starbucks",
+    ],
+)
+def test_deterministic_finance_transaction_inputs_execute(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, text: str) -> None:
+    monkeypatch.setenv("VICTUS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("VICTUS_LLM_ENABLED", "false")
+    ensure_directories()
+
+    response = route_intent(OrchestrateRequest(text=text), _NoopProposer())
+
+    assert isinstance(response, OrchestrateResponse)
+    assert response.intent.action == "finance.add_transaction"
+    assert response.intent.parameters.get("amount") == 6.0
+    assert response.intent.parameters.get("merchant") == "Starbucks"
+    assert response.executed is True
+
+
+def test_finance_explicit_payload_works_without_debug_context(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("VICTUS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("VICTUS_LLM_ENABLED", "false")
+    ensure_directories()
+
+    response = route_intent(OrchestrateRequest(text="finance.add_transaction: 6 Starbucks", context={}), _NoopProposer())
+
+    assert isinstance(response, OrchestrateResponse)
+    assert response.intent.action == "finance.add_transaction"
+    assert response.executed is True
+
+
+def test_non_chat_request_never_returns_chat_reply_action(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VICTUS_LLM_ENABLED", "true")
+    proposer = _StaticProposer(
+        ProposalResult(ok=True, confidence=0.91, action="chat.reply", args={}, reason="smalltalk", llm_used=True)
+    )
+
+    response = route_intent(OrchestrateRequest(text="I spent $6 at Starbucks"), proposer)
+
+    if isinstance(response, OrchestrateResponse):
+        assert response.intent.action != "chat.reply"
+    else:
+        assert response.error == "clarify"
+
+
+def test_router_noops_when_deterministic_misses_without_llm(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("VICTUS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("VICTUS_LLM_ENABLED", "false")
+    ensure_directories()
+    monkeypatch.setattr("core.orchestrator.router._deterministic_route", lambda request: None)
+    monkeypatch.setattr("core.orchestrator.router._regex_finance_candidate", lambda text: None)
+
+    response = route_intent(
+        OrchestrateRequest(text="I spent $6 at Starbucks", context={"debug": True}),
+        _NoopProposer(),
+    )
+
+    assert isinstance(response, OrchestrateResponse)
+    assert response.executed is False
+    assert response.intent.action == "noop"
+    trace = (response.result or {}).get("trace", {})
+    decision_path = trace.get("decision_path", [])
+    assert "deterministic:no_match" in decision_path

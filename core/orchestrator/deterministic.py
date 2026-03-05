@@ -1,13 +1,25 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from functools import lru_cache
 import os
 import re
 from pathlib import Path
 from typing import Optional
 
+from core.orchestrator.policy import _ALLOWED_ACTIONS
 from core.orchestrator.schemas import Intent
 from victus.core.confidence import ConfidenceCore, ConfidenceStore, make_key
+
+
+_EXPLICIT_ACTION_WITH_PAYLOAD = re.compile(r"^(?P<action>[a-z]+(?:\.[a-z_]+)+)\s*:\s*(?P<payload>.+)$")
+_EXPLICIT_ACTION_MISSING_PAYLOAD = re.compile(r"^(?P<action>[a-z]+(?:\.[a-z_]+)+)\s*:\s*$")
+_PAYLOAD_FIELD_BY_ACTION: dict[str, str] = {
+    "memory.add": "content",
+    "memory.search": "query",
+    "memory.delete": "id",
+    "files.read": "path",
+}
 
 
 def _normalize(text: str) -> str:
@@ -48,6 +60,27 @@ def _extract_amount(text: str) -> Optional[float]:
     return float(match.group(1))
 
 
+def _finance_transaction_params(amount: float, *, merchant: str | None = None, category: str | None = None) -> dict[str, object]:
+    resolved_merchant = _normalize(merchant) if merchant else None
+    resolved_category = _normalize(category) if category else (resolved_merchant or "uncategorized")
+    return {
+        "amount": amount,
+        "category": resolved_category,
+        "merchant": resolved_merchant,
+        "currency": "USD",
+        "occurred_at": datetime.now(tz=timezone.utc).isoformat(),
+    }
+
+
+def _parse_finance_payload(payload: str) -> Optional[dict[str, object]]:
+    match = re.match(r"^\$?(?P<amount>\d+(?:\.\d{1,2})?)\s+(?P<merchant>.+)$", payload.strip())
+    if not match:
+        return None
+    amount = float(match.group("amount"))
+    merchant = match.group("merchant")
+    return _finance_transaction_params(amount, merchant=merchant)
+
+
 def _parse_category_and_merchant(text: str) -> tuple[str | None, str | None]:
     lowered = text.strip()
     if " at " in lowered:
@@ -58,6 +91,25 @@ def _parse_category_and_merchant(text: str) -> tuple[str | None, str | None]:
 
 def parse_finance_intent(utterance: str) -> Optional[Intent]:
     lowered = utterance.lower()
+
+    add_transaction_match = re.search(r"\badd\s+transaction\s+\$?(\d+(?:\.\d{1,2})?)\s+(?:for\s+)?(.+)", utterance, re.IGNORECASE)
+    if add_transaction_match:
+        amount = float(add_transaction_match.group(1))
+        merchant = add_transaction_match.group(2)
+        return Intent(action="finance.add_transaction", parameters=_finance_transaction_params(amount, merchant=merchant), confidence=1.0)
+
+    log_match = re.search(r"\blog\s+\$?(\d+(?:\.\d{1,2})?)\s+(.+)", utterance, re.IGNORECASE)
+    if log_match:
+        amount = float(log_match.group(1))
+        merchant = log_match.group(2)
+        return Intent(action="finance.add_transaction", parameters=_finance_transaction_params(amount, merchant=merchant), confidence=1.0)
+
+    spent_at_match = re.search(r"\b(?:spent|paid)\s+\$?(\d+(?:\.\d{1,2})?)\s+(?:at|for)\s+(.+)", utterance, re.IGNORECASE)
+    if spent_at_match:
+        amount = float(spent_at_match.group(1))
+        merchant = spent_at_match.group(2)
+        return Intent(action="finance.add_transaction", parameters=_finance_transaction_params(amount, merchant=merchant), confidence=1.0)
+
     spent_paid = re.search(r"\b(spent|paid)\b", lowered)
     if spent_paid:
         amount = _extract_amount(lowered)
@@ -72,7 +124,7 @@ def parse_finance_intent(utterance: str) -> Optional[Intent]:
             return None
         return Intent(
             action="finance.add_transaction",
-            parameters={"amount": amount, "category": category, "merchant": merchant},
+            parameters=_finance_transaction_params(amount, merchant=merchant, category=category),
             confidence=1.0,
         )
     if "bought " in lowered and " for " in lowered:
@@ -86,7 +138,7 @@ def parse_finance_intent(utterance: str) -> Optional[Intent]:
             return None
         return Intent(
             action="finance.add_transaction",
-            parameters={"amount": amount, "category": category, "merchant": merchant},
+            parameters=_finance_transaction_params(amount, merchant=merchant, category=category),
             confidence=1.0,
         )
     if lowered in {"list transactions", "show transactions"}:
@@ -186,6 +238,64 @@ def _select_domain_intent(utterance: str) -> Optional[Intent]:
 
 
 def parse_intent(utterance: str) -> Optional[Intent]:
+    stripped = utterance.strip()
+    with_payload_match = _EXPLICIT_ACTION_WITH_PAYLOAD.match(stripped)
+    if with_payload_match:
+        action = with_payload_match.group("action")
+        payload = _normalize(with_payload_match.group("payload"))
+        supported_actions = set(_ALLOWED_ACTIONS) | set(_PAYLOAD_FIELD_BY_ACTION)
+        if action not in supported_actions:
+            return Intent(
+                action="noop",
+                parameters={
+                    "error": "unknown_intent",
+                    "message": f"Unsupported explicit action '{action}'.",
+                },
+                confidence=1.0,
+            )
+
+        payload_field = _PAYLOAD_FIELD_BY_ACTION.get(action)
+        if payload_field is None:
+            if action == "finance.add_transaction":
+                params = _parse_finance_payload(payload)
+                if params is not None:
+                    return Intent(action=action, parameters=params, confidence=1.0)
+            return Intent(
+                action="noop",
+                parameters={
+                    "error": "clarify",
+                    "message": f"Action '{action}' needs structured parameters; payload form is not supported.",
+                },
+                confidence=1.0,
+            )
+
+        return Intent(action=action, parameters={payload_field: payload}, confidence=1.0)
+
+    missing_payload_match = _EXPLICIT_ACTION_MISSING_PAYLOAD.match(stripped)
+    if missing_payload_match:
+        action = missing_payload_match.group("action")
+        supported_actions = set(_ALLOWED_ACTIONS) | set(_PAYLOAD_FIELD_BY_ACTION)
+        if action not in supported_actions:
+            return Intent(
+                action="noop",
+                parameters={
+                    "error": "unknown_intent",
+                    "message": f"Unsupported explicit action '{action}'.",
+                },
+                confidence=1.0,
+            )
+        payload_field = _PAYLOAD_FIELD_BY_ACTION.get(action, "payload")
+        return Intent(
+            action="noop",
+            parameters={
+                "error": "clarify",
+                "message": f"Please provide '{payload_field}' for action '{action}'.",
+                "action": action,
+                "required_field": payload_field,
+            },
+            confidence=1.0,
+        )
+
     return _select_domain_intent(utterance)
 
 

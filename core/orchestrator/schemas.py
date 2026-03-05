@@ -22,6 +22,7 @@ class OrchestrateRequest(BaseModel):
 class Intent(BaseModel):
     action: Literal[
         "noop",
+        "chat.reply",
         "camera.status",
         "camera.capture",
         "camera.recognize",
@@ -35,6 +36,7 @@ class Intent(BaseModel):
         "files.list",
         "files.read",
         "files.write",
+        "unknown.action",
     ]
     parameters: Dict[str, Any] = Field(default_factory=dict)
     confidence: float = Field(default=1.0, ge=0.0, le=1.0)
