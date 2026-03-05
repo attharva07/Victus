@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import pytest
+
+from core.config import get_security_config
 from core.errors import VictusError
 from core.logging.logger import redact_fields
 from core.memory.service import MemoryService
-from core.orchestrator.router import _execute_intent
+from core.orchestrator.router import _TOOL_REGISTRY, _execute_intent
 from core.orchestrator.schemas import Intent
 
 
@@ -47,16 +50,44 @@ def test_memory_service_defaults_sensitivity_and_filters() -> None:
     assert len(allowed_critical) == 2
 
 
+
+
+def test_unknown_sensitivity_rejected() -> None:
+    repo = _FakeRepo()
+    service = MemoryService(repository=repo)  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="Unsupported sensitivity"):
+        service.write({"content": "secret", "sensitivity": "top-secret"})
+
+
+def test_prod_forces_redaction_even_if_disabled(monkeypatch) -> None:
+    monkeypatch.setenv("VICTUS_ENV", "prod")
+    monkeypatch.setenv("VICTUS_LOG_REDACTION_ENABLED", "false")
+
+    assert get_security_config().log_redaction_enabled is True
+
+
+def test_tool_registry_blocks_action_missing_handler_even_if_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VICTUS_ENABLED_TOOLS", "noop")
+    monkeypatch.delitem(_TOOL_REGISTRY, "noop", raising=False)
+
+    message, actions = _execute_intent(Intent(action="noop", parameters={}, confidence=1.0))
+    assert message == "No action executed."
+    assert actions == []
+
 def test_redaction_rules_cover_fields_and_patterns() -> None:
+    jwt_like = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhZG1pbiI6dHJ1ZX0.c2lnbmF0dXJl"
     payload = redact_fields(
         {
             "api_key": "sk-1234567890123456789012345",
-            "note": "authorization=Bearer abc123 token:secret",
+            "headers": "Authorization: Bearer abc.def.ghi",
+            "note": f"embedded token {jwt_like}",
             "nested": {"password": "letmein"},
         },
         enabled=True,
     )
     assert payload["api_key"] == "[REDACTED]"
+    assert "[REDACTED]" in str(payload["headers"])
     assert "[REDACTED]" in str(payload["note"])
     assert payload["nested"]["password"] == "[REDACTED]"
 

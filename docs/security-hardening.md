@@ -81,3 +81,26 @@ Planned next layers:
 3. Managed key lifecycle/rotation and secure key storage.
 4. Structured security telemetry and anomaly detection.
 5. Optional tamper-evident audit log chaining.
+
+## Operational Notes
+- **Switching environments safely (`VICTUS_ENV`)**
+  - Development (default): `export VICTUS_ENV=dev`
+  - Production hardening: `export VICTUS_ENV=prod`
+  - Example one-liner: `VICTUS_ENV=prod pytest -q`
+
+- **Config keys forced/ignored in production**
+  - `VICTUS_LOG_REDACTION_ENABLED` is forced to `true` in prod even if explicitly set to `false`.
+  - `VICTUS_MAX_MEMORY_RETRIEVAL` is capped to a safe upper bound (5) in prod.
+  - `VICTUS_CONFIDENCE_THRESHOLD` is raised to at least `0.8` in prod.
+
+- **Log sinks and redaction behavior**
+  - Security and audit events are emitted through the canonical `core.logging.logger.log_event` entry point (via `audit_event`).
+  - In local runs, events go to the process logger stream and whatever sink captures stdout/stderr.
+  - Redaction examples:
+    - `Authorization: Bearer eyJ...` -> `Authorization: [REDACTED]`
+    - `sk-1234567890...` -> `[REDACTED]`
+    - JWT-like blobs in arbitrary text fields -> `[REDACTED]`
+
+- **Quick CI troubleshooting**
+  - Lint: `ruff check .`
+  - Tests: `pytest -q`

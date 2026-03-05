@@ -297,7 +297,7 @@ def test_non_chat_request_never_returns_chat_reply_action(monkeypatch: pytest.Mo
         assert response.error == "clarify"
 
 
-def test_router_uses_cognition_when_deterministic_misses(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_router_noops_when_deterministic_misses_without_llm(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("VICTUS_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("VICTUS_LLM_ENABLED", "false")
     ensure_directories()
@@ -310,11 +310,8 @@ def test_router_uses_cognition_when_deterministic_misses(monkeypatch: pytest.Mon
     )
 
     assert isinstance(response, OrchestrateResponse)
-    assert response.executed is True
-    assert response.intent.action == "finance.add_transaction"
-    assert response.intent.parameters.get("amount") == 6.0
-    assert response.intent.parameters.get("merchant") == "Starbucks"
+    assert response.executed is False
+    assert response.intent.action == "noop"
     trace = (response.result or {}).get("trace", {})
     decision_path = trace.get("decision_path", [])
     assert "deterministic:no_match" in decision_path
-    assert "cognition:selected:finance.add_transaction" in decision_path
