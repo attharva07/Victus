@@ -89,3 +89,6 @@ npm test
 
 ## Cleanup report
 See `CLEANUP_REPORT.md` for full removal and quarantine rationale.
+
+## Security
+- Security hardening design and usage notes: `docs/security-hardening.md`.

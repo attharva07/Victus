@@ -33,6 +33,9 @@ def init_db() -> None:
             )
             """
         )
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(memories)").fetchall()}
+        if "sensitivity" not in columns:
+            conn.execute("ALTER TABLE memories ADD COLUMN sensitivity TEXT DEFAULT 'internal'")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS transactions (
