@@ -4,11 +4,8 @@ import re
 from datetime import datetime, timezone
 from typing import Callable
 
-from pydantic import BaseModel, ValidationError
-
 from adapters.llm.provider import LLMProposer, ProposalResult
 from core.camera.errors import CameraError
-from core.cognition import DecisionAdvisor
 from core.camera.service import CameraService
 from core.config import get_orchestrator_config, get_security_config
 from core.filesystem.service import list_sandbox_files, read_sandbox_file, write_sandbox_file
@@ -16,9 +13,7 @@ from core.finance.service import add_transaction, list_transactions, summary
 from core.logging.audit import audit_event, safe_excerpt, text_hash
 from core.memory.service import add_memory, delete_memory, list_recent, search_memories
 from core.orchestrator.deterministic import parse_intent
-from core.orchestrator.policy import evaluate_candidates, validate_intent
-from core.signals.extractors import extract_signals
-from core.signals.models import SignalBundle
+from core.orchestrator.policy import validate_intent
 from core.orchestrator.schemas import (
     ActionResult,
     Intent,
@@ -44,97 +39,6 @@ _ALLOWED_ACTIONS = [
     "files.read",
     "files.write",
 ]
-
-
-class _MemoryAddArgs(BaseModel):
-    content: str
-    tags: list[str] | None = None
-    importance: int | None = None
-    sensitivity: str | None = None
-
-
-class _MemorySearchArgs(BaseModel):
-    query: str = ""
-    tags: list[str] | None = None
-    limit: int = 10
-    allowed_sensitivity: list[str] | None = None
-
-
-class _MemoryListArgs(BaseModel):
-    limit: int = 20
-    allowed_sensitivity: list[str] | None = None
-
-
-class _MemoryDeleteArgs(BaseModel):
-    id: str
-
-
-class _FinanceAddArgs(BaseModel):
-    amount: float
-    category: str = "uncategorized"
-    merchant: str | None = None
-    currency: str = "USD"
-    occurred_at: str | None = None
-
-
-class _FinanceListArgs(BaseModel):
-    category: str | None = None
-    limit: int = 50
-
-
-class _FinanceSummaryArgs(BaseModel):
-    period: str = "week"
-    group_by: str = "category"
-
-
-class _FilesReadArgs(BaseModel):
-    path: str
-
-
-class _FilesWriteArgs(BaseModel):
-    path: str
-    content: str = ""
-    mode: str = "overwrite"
-
-
-class _FilesListArgs(BaseModel):
-    pass
-
-
-class _CameraStatusArgs(BaseModel):
-    pass
-
-
-class _CameraCaptureArgs(BaseModel):
-    pass
-
-
-class _CameraRecognizeArgs(BaseModel):
-    pass
-
-
-class _ChatReplyArgs(BaseModel):
-    pass
-
-
-_ARG_SCHEMAS: dict[str, type[BaseModel]] = {
-    "memory.add": _MemoryAddArgs,
-    "memory.search": _MemorySearchArgs,
-    "memory.list": _MemoryListArgs,
-    "memory.delete": _MemoryDeleteArgs,
-    "finance.add_transaction": _FinanceAddArgs,
-    "finance.list_transactions": _FinanceListArgs,
-    "finance.summary": _FinanceSummaryArgs,
-    "files.read": _FilesReadArgs,
-    "files.write": _FilesWriteArgs,
-    "files.list": _FilesListArgs,
-    "camera.status": _CameraStatusArgs,
-    "camera.capture": _CameraCaptureArgs,
-    "camera.recognize": _CameraRecognizeArgs,
-    "chat.reply": _ChatReplyArgs,
-}
-
-
 
 
 _SMALLTALK_PATTERNS: tuple[re.Pattern[str], ...] = (
@@ -423,74 +327,6 @@ def allowed_actions() -> list[str]:
     return list(_ALLOWED_ACTIONS)
 
 
-def _apply_cognitive_layer(
-    *,
-    intent: Intent,
-    text: str,
-    signals: SignalBundle,
-    context: dict[str, object],
-    decision_path: list[str],
-) -> tuple[Intent | None, dict[str, object]]:
-    advisor = DecisionAdvisor()
-    built = advisor.build_intent_from_signals(signals, dict(context))
-    seed_action = intent.action
-    seed_params = intent.parameters
-    if intent.action in {"unknown.action", "noop"}:
-        seed_action = built.action
-        seed_params = built.parameters
-        decision_path.append(f"cognition:signals_seed:{seed_action}")
-
-    plan = advisor.evaluate(
-        intent_action=seed_action,
-        intent_params=seed_params,
-        user_text=text,
-        context=dict(context),
-    )
-    policy_result = evaluate_candidates(plan.candidates)
-    reranked = advisor.rerank_after_policy(
-        plan=plan,
-        allowed_actions=policy_result.allowed_actions,
-        denied_reasons=policy_result.denied_reasons,
-    )
-    audit_event(
-        "cognition.plan",
-        trace_id=plan.trace_id,
-        intent_action=intent.action,
-        candidates=[candidate.model_dump() for candidate in plan.candidates],
-        policy_decisions=[decision.model_dump() for decision in policy_result.decisions],
-        reranked=[candidate.model_dump() for candidate in reranked.candidates],
-    )
-    if reranked.selected is None:
-        decision_path.append("cognition:no_allowed_candidates")
-        audit_event("cognition.selection", trace_id=plan.trace_id, selected_action=None, reason="no_allowed_candidates")
-        return None, {"trace_id": plan.trace_id, "notes": reranked.notes, "built_intent": built.model_dump()}
-
-    selected = reranked.selected
-    reason = "top_allowed_candidate"
-    audit_event(
-        "cognition.selection",
-        trace_id=plan.trace_id,
-        selected_action=selected.action,
-        score=selected.score_total,
-        reason=reason,
-    )
-    decision_path.append(f"cognition:selected:{selected.action}")
-    if selected.action == "clarify":
-        return None, {"trace_id": plan.trace_id, "clarify": selected.parameters, "notes": reranked.notes, "built_intent": built.model_dump()}
-    schema = _ARG_SCHEMAS.get(selected.action)
-    if schema is None:
-        return None, {"trace_id": plan.trace_id, "notes": reranked.notes, "error": "action_not_executable", "built_intent": built.model_dump()}
-    try:
-        parsed_args = schema.model_validate(selected.parameters)
-    except ValidationError:
-        return None, {"trace_id": plan.trace_id, "notes": reranked.notes, "error": "invalid_candidate_parameters", "built_intent": built.model_dump()}
-    return Intent(action=selected.action, parameters=parsed_args.model_dump(), confidence=intent.confidence), {
-        "trace_id": plan.trace_id,
-        "notes": reranked.notes,
-        "built_intent": built.model_dump(),
-    }
-
-
 def route_intent(
     request: OrchestrateRequest, llm_provider: LLMProposer
 ) -> OrchestrateResponse | OrchestrateErrorResponse:
@@ -503,7 +339,6 @@ def route_intent(
     proposal_confidence: float | None = None
     llm_was_called = False
     decision_path: list[str] = []
-    signals = extract_signals(text)
     debug_extras: dict[str, object] = {}
 
     def _trace(router_mode: str) -> dict[str, object] | None:
@@ -520,12 +355,9 @@ def route_intent(
             **debug_extras,
         }
 
-    if debug_enabled:
-        debug_extras["signals"] = signals.model_dump()
 
     if not force_llm:
         deterministic_intent = _deterministic_route(request)
-        cognition_meta: dict[str, object] | None = None
         if deterministic_intent is not None and deterministic_intent.confidence >= 1.0:
             decision_path.append("deterministic:tool_match")
             explicit_error = deterministic_intent.parameters.get("error")
@@ -538,104 +370,7 @@ def route_intent(
                         error="unknown_intent",
                         message=message if isinstance(message, str) else "Unsupported explicit action.",
                     )
-            selected_intent, cognition_meta = _apply_cognitive_layer(
-                intent=deterministic_intent,
-                text=text,
-                context=request.context,
-                signals=signals,
-                decision_path=decision_path,
-            )
-            if debug_enabled:
-                debug_extras["cognition"] = cognition_meta
-            if selected_intent is not None:
-                selected_intent = validate_intent(selected_intent)
-            if selected_intent is not None and selected_intent.action != "noop":
-                message, actions = _execute_intent(selected_intent)
-                _log_orchestration_decision(
-                    mode="deterministic",
-                    llm_used=False,
-                    selected_model=None,
-                    action=selected_intent.action,
-                    confidence=selected_intent.confidence,
-                    executed=True,
-                    error_type=None,
-                )
-                result = _response_result(actions, _trace("deterministic")) or {}
-                result["cognition"] = cognition_meta
-                return OrchestrateResponse(
-                    intent=selected_intent,
-                    message=message,
-                    actions=actions,
-                    mode="deterministic",
-                    executed=True,
-                    result=result,
-                )
-            if selected_intent is None and cognition_meta.get("clarify"):
-                clarify = cognition_meta["clarify"]
-                question = clarify.get("question") if isinstance(clarify, dict) else None
-                return _clarify_response(question if isinstance(question, str) else None)
-
-        regex_finance_intent = _regex_finance_candidate(text)
-        if regex_finance_intent is not None:
-            decision_path.append("deterministic:regex_finance_candidate")
-            selected_intent, cognition_meta = _apply_cognitive_layer(
-                intent=regex_finance_intent,
-                text=text,
-                context=request.context,
-                signals=signals,
-                decision_path=decision_path,
-            )
-            if debug_enabled:
-                debug_extras["cognition"] = cognition_meta
-            if selected_intent is not None:
-                selected_intent = validate_intent(selected_intent)
-            if selected_intent is not None and selected_intent.action != "noop":
-                message, actions = _execute_intent(selected_intent)
-                _log_orchestration_decision(
-                    mode="deterministic",
-                    llm_used=False,
-                    selected_model=None,
-                    action=selected_intent.action,
-                    confidence=selected_intent.confidence,
-                    executed=True,
-                    error_type=None,
-                )
-                result = _response_result(actions, _trace("deterministic")) or {}
-                result["cognition"] = cognition_meta
-                return OrchestrateResponse(
-                    intent=selected_intent,
-                    message=message,
-                    actions=actions,
-                    mode="deterministic",
-                    executed=True,
-                    result=result,
-                )
-            if selected_intent is None and cognition_meta.get("clarify"):
-                clarify = cognition_meta["clarify"]
-                question = clarify.get("question") if isinstance(clarify, dict) else None
-                return _clarify_response(question if isinstance(question, str) else None)
-
-        tool_domains = _tool_domains_in_text(text)
-        if not tool_domains:
-            decision_path.append("deterministic:noop_non_tool")
-            return _noop_response("Please ask for a supported tool action (memory, finance, files, or camera).", _trace("deterministic"))
-
-        if deterministic_intent is None and not config.enable_llm_fallback:
-            decision_path.append("deterministic:no_match")
-            selected_intent, cognition_meta = _apply_cognitive_layer(
-                intent=Intent(action="unknown.action", parameters={}, confidence=0.0),
-                text=text,
-                context=request.context,
-                signals=signals,
-                decision_path=decision_path,
-            )
-            if selected_intent is None:
-                question: str | None = None
-                if isinstance(cognition_meta.get("clarify"), dict):
-                    clarify = cognition_meta["clarify"]
-                    question = clarify.get("question") if isinstance(clarify.get("question"), str) else None
-                return _clarify_response(question)
-            selected_intent = validate_intent(selected_intent)
+            selected_intent = validate_intent(deterministic_intent)
             if selected_intent.action != "noop":
                 message, actions = _execute_intent(selected_intent)
                 _log_orchestration_decision(
@@ -647,16 +382,47 @@ def route_intent(
                     executed=True,
                     error_type=None,
                 )
-                result = _response_result(actions, _trace("deterministic")) or {}
-                result["cognition"] = cognition_meta
                 return OrchestrateResponse(
                     intent=selected_intent,
                     message=message,
                     actions=actions,
                     mode="deterministic",
                     executed=True,
-                    result=result,
+                    result=_response_result(actions, _trace("deterministic")),
                 )
+
+        regex_finance_intent = _regex_finance_candidate(text)
+        if regex_finance_intent is not None:
+            decision_path.append("deterministic:regex_finance_candidate")
+            selected_intent = validate_intent(regex_finance_intent)
+            if selected_intent.action != "noop":
+                message, actions = _execute_intent(selected_intent)
+                _log_orchestration_decision(
+                    mode="deterministic",
+                    llm_used=False,
+                    selected_model=None,
+                    action=selected_intent.action,
+                    confidence=selected_intent.confidence,
+                    executed=True,
+                    error_type=None,
+                )
+                return OrchestrateResponse(
+                    intent=selected_intent,
+                    message=message,
+                    actions=actions,
+                    mode="deterministic",
+                    executed=True,
+                    result=_response_result(actions, _trace("deterministic")),
+                )
+
+        tool_domains = _tool_domains_in_text(text)
+        if not tool_domains:
+            decision_path.append("deterministic:noop_non_tool")
+            return _noop_response("Please ask for a supported tool action (memory, finance, files, or camera).", _trace("deterministic"))
+
+        if deterministic_intent is None and not config.enable_llm_fallback:
+            decision_path.append("deterministic:no_match")
+            return _noop_response("I need a concrete tool request to continue.", _trace("deterministic"))
 
         if len(tool_domains) > 1:
             decision_path.append("deterministic:clarify")
@@ -729,18 +495,7 @@ def route_intent(
         decision_path.append("llm:invalid_or_unparseable")
         proposed_intent = Intent(action="unknown.action", parameters={}, confidence=proposal.confidence)
 
-    selected_intent, cognition_meta = _apply_cognitive_layer(
-        intent=proposed_intent,
-        text=text,
-        context=request.context,
-        signals=signals,
-        decision_path=decision_path,
-    )
-    if debug_enabled:
-        debug_extras["cognition"] = cognition_meta
-    if selected_intent is None:
-        return _clarify_response("I need clarification because no allowed candidate action remained.")
-    validated_intent = validate_intent(selected_intent)
+    validated_intent = validate_intent(proposed_intent)
     confidence = validated_intent.confidence
 
     if validated_intent.action == "chat.reply":
@@ -773,7 +528,7 @@ def route_intent(
                 "confidence": confidence,
             },
             executed=True,
-            result=(_response_result(actions, _trace("llm_proposal")) or {}) | {"cognition": cognition_meta},
+            result=_response_result(actions, _trace("llm_proposal")),
         )
 
     if confidence >= propose_threshold:
@@ -789,7 +544,7 @@ def route_intent(
                 "confidence": confidence,
             },
             executed=False,
-            result=(({"trace": trace} if (trace := _trace("llm_proposal")) is not None else {}) | {"cognition": cognition_meta}) or None,
+            result=({"trace": trace} if (trace := _trace("llm_proposal")) is not None else None),
         )
         _log_orchestration_decision(
             mode="llm_proposal",

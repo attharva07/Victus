@@ -10,9 +10,10 @@ from core.config import get_security_config
 _LOGGER: Optional[logging.Logger] = None
 _SECRET_FIELD_NAMES = {"token", "secret", "password", "api_key", "authorization", "credential", "key"}
 _SECRET_PATTERNS = [
-    re.compile(r"\bsk-[A-Za-z0-9]{20,}\b"),
+    re.compile(r"\bsk-[A-Za-z0-9]{16,}\b"),
     re.compile(r"\b(?:api[_-]?key|token|password|secret|authorization)\s*[:=]\s*[^\s,;]+", re.IGNORECASE),
-    re.compile(r"\b(?:bearer\s+)[A-Za-z0-9._\-]+", re.IGNORECASE),
+    re.compile(r"\b(?:authorization\s*:\s*bearer|bearer\s+)[A-Za-z0-9._\-]+", re.IGNORECASE),
+    re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b"),
 ]
 
 
