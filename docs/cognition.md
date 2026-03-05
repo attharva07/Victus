@@ -1,42 +1,66 @@
-# Cognition Layer (DecisionAdvisor)
+# Cognition v1
 
-The cognition layer is an **advisory-only** module for orchestration. It never executes tools or bypasses policy.
+Cognition is now a **stateful decision layer** that sits between intent routing and tool orchestration.
 
-## Flow
-1. Existing intent parser resolves a base action.
-2. `DecisionAdvisor.evaluate(...)` generates and ranks candidate actions.
-3. `PolicyGate` (`evaluate_candidates`) evaluates each candidate (allow/deny + reason).
-4. `DecisionAdvisor.rerank_after_policy(...)` reranks only allowed candidates.
-5. Orchestrator executes the top allowed candidate (or returns clarify/no-allowed response).
-6. Audit logging records cognition plan and selection.
+## Pipeline
+1. **Interpreter (LLM adapter)**
+   - `interpret(text, context) -> IntentCandidate`.
+   - Normalizes output and validates with strict schema (`extra=forbid`, strict types).
+   - Invalid output falls back to noop/clarify path.
+2. **Deliberator (deterministic)**
+   - Input: `IntentCandidate + session_state + config`.
+   - Output: `Decision` with `mode`, `risk`, `action_allowed`, optional clarification.
+   - Handles confidence thresholds and ambiguity.
+3. **Identity Controller**
+   - Input: user text, decision, session state, memory candidates.
+   - Output: persona mode, selected memories, state patch.
+   - Persona override rules:
+     - high/blocked risk -> `crisp_cautious`
+     - emotional signals -> `warm`
+     - default -> `jarvis_playful`
+4. **Policy Gate**
+   - Enforces allowlist, blocked actions, and high-risk confirmation handshake.
+   - High risk requires `confirmation_token == "CONFIRM"`.
+5. **Orchestrator (registry execution)**
+   - Executes only through `TOOL_REGISTRY` handlers.
+   - Cognition never calls tools directly.
 
-## Objects
-- `CandidateAction`
-  - `action: str`
-  - `parameters: dict`
-  - `score_total: float`
-  - `score_breakdown: dict[str, float]` with `risk`, `effort`, `utility`, `confidence`, `reversibility`, `time`
-  - `rationale: str`
-  - `required_permissions: list[str]`
-  - `tags: list[str]`
-- `DecisionPlan`
-  - `candidates: list[CandidateAction]`
-  - `selected: CandidateAction | None`
-  - `notes: list[str]`
-  - `trace_id: str`
+## Intent schema (strict)
+`IntentCandidate` fields:
+- `action: str`
+- `parameters: dict`
+- `confidence: float`
+- `requested_memory_ops: optional dict`
+- `risk: optional enum (low|medium|high|blocked)`
 
-## Heuristics (v1)
-Deterministic weighted scoring:
-- Risk by action namespace and destructive patterns (`admin.*`, `*delete*`, `finance.*`).
-- Effort by parameter complexity.
-- Utility by intent match + context boosts (e.g., `exam_week`).
-- Reversibility (`archive`/`trash`/`draft` higher than hard delete).
-- Confidence from context (`intent_confidence`/`confidence`).
-- Time approximation derived from effort.
+Strict validation prevents unsafe auto-actions when malformed payloads arrive.
 
-## Audit Events
-- `cognition.plan` includes `trace_id`, original candidates, policy decisions, and reranked list.
-- `cognition.selection` includes selected action and reason.
+## Session state machine
+Stored in in-memory `InMemorySessionStateStore`:
+- `current_focus`
+- `pending_clarification`
+- `last_action`
+- `last_intent`
 
-## Unknown Action Fallback
-When deterministic parsing cannot map a request (`None`), the router now forwards a placeholder `Intent(action="unknown.action", ...)` into cognition. Cognition can propose supported tool actions (finance/memory/files/camera) from lightweight text heuristics, and policy still allowlists before execution. If no safe candidate wins, the router returns a clarify question from cognition.
+Transitions:
+- clarify -> sets `pending_clarification=True`
+- act/suggest/refuse -> clears `pending_clarification`
+- no clarification loops: if already pending and confidence is still low, deliberator emits `suggest` instead of another clarify loop.
+
+## Clarification flow
+- If confidence is below threshold, cognition returns `mode=clarify` with question.
+- If risk is high without confirmation, policy gate blocks execution and asks for explicit `CONFIRM` handshake.
+
+## Identity + memory selection
+- Memories are capped (`memory_cap`, default 3).
+- For high/blocked risk, sensitive memories are filtered out.
+- Identity controller emits `state_patch` consumed by session store.
+
+## Policy interaction details
+`enforce_policy_gate(...)` checks:
+- allowlist tool membership
+- blocked action list
+- risk status
+- confirmation requirement for high-risk actions
+
+On policy failure, orchestrator returns clarification instead of execution.

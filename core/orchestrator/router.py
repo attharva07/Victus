@@ -6,16 +6,12 @@ from datetime import datetime, timezone
 from pydantic import BaseModel, ValidationError
 
 from adapters.llm.provider import LLMProposer, ProposalResult
-from core.camera.errors import CameraError
-from core.cognition import DecisionAdvisor
-from core.camera.service import CameraService
+from core.cognition import CognitionEngine, InMemorySessionStateStore
 from core.config import get_orchestrator_config
-from core.filesystem.service import list_sandbox_files, read_sandbox_file, write_sandbox_file
-from core.finance.service import add_transaction, list_transactions, summary
 from core.logging.audit import audit_event, safe_excerpt, text_hash
-from core.memory.service import add_memory, delete_memory, list_recent, search_memories
+from core.orchestrator.registry import TOOL_REGISTRY
 from core.orchestrator.deterministic import parse_intent
-from core.orchestrator.policy import evaluate_candidates, validate_intent
+from core.orchestrator.policy import enforce_policy_gate, validate_intent
 from core.signals.extractors import extract_signals
 from core.signals.models import SignalBundle
 from core.orchestrator.schemas import (
@@ -148,6 +144,9 @@ _TOOL_DOMAIN_HINTS = {
     "camera": ("camera", "photo", "picture", "capture", "recognize", "face"),
 }
 
+_SESSION_STORE = InMemorySessionStateStore()
+_COGNITION = CognitionEngine(state_store=_SESSION_STORE)
+
 
 def _is_smalltalk(text: str) -> bool:
     normalized = text.strip()
@@ -172,99 +171,11 @@ def _tool_domains_in_text(text: str) -> list[str]:
 def _execute_intent(intent: Intent) -> tuple[str, list[ActionResult]]:
     action = intent.action
     params = intent.parameters
-    if action == "camera.status":
-        service = CameraService()
-        status = service.status()
-        result = ActionResult(action=action, parameters=params, result=status.model_dump())
-        return f"Camera status: {status.message}", [result]
-    if action == "camera.capture":
-        service = CameraService()
-        try:
-            capture = service.capture()
-        except CameraError as exc:
-            result = ActionResult(action=action, parameters=params, result={"error": str(exc)})
-            return str(exc), [result]
-        result = ActionResult(action=action, parameters=params, result=capture.model_dump())
-        return "Captured an image from the camera.", [result]
-    if action == "camera.recognize":
-        service = CameraService()
-        try:
-            recognition = service.recognize()
-        except CameraError as exc:
-            result = ActionResult(action=action, parameters=params, result={"error": str(exc)})
-            return str(exc), [result]
-        result = ActionResult(action=action, parameters=params, result=recognition.model_dump())
-        return f"Recognized {len(recognition.matches)} face matches.", [result]
-    if action == "memory.add":
-        memory_id = add_memory(
-            content=params["content"],
-            tags=params.get("tags"),
-            importance=params.get("importance", 5),
-        )
-        audit_event("orchestrate_memory_add", memory_id=memory_id)
-        result = ActionResult(action=action, parameters=params, result={"id": memory_id})
-        return f"Saved memory {memory_id}.", [result]
-    if action == "memory.search":
-        results = search_memories(query=params.get("query", ""), tags=params.get("tags"), limit=params.get("limit", 10))
-        audit_event("orchestrate_memory_search", query=params.get("query", ""))
-        result = ActionResult(action=action, parameters=params, result={"results": results})
-        query = params.get("query", "")
-        latest = ""
-        if results:
-            excerpt = str(results[0].get("content", "")).strip()
-            latest = f" Latest: {safe_excerpt(excerpt, max_len=80)}." if excerpt else ""
-        return f"Found {len(results)} memories matching '{query}'.{latest}", [result]
-    if action == "memory.list":
-        results = list_recent(limit=params.get("limit", 20))
-        audit_event("orchestrate_memory_list", limit=params.get("limit", 20))
-        result = ActionResult(action=action, parameters=params, result={"results": results})
-        return f"Listed {len(results)} memories.", [result]
-    if action == "memory.delete":
-        deleted = delete_memory(memory_id=params["id"])
-        audit_event("orchestrate_memory_delete", memory_id=params["id"], deleted=deleted)
-        result = ActionResult(action=action, parameters=params, result={"deleted": deleted})
-        return ("Memory deleted." if deleted else "Memory not found."), [result]
-    if action == "finance.add_transaction":
-        amount = params["amount"]
-        amount_cents = int(round(float(amount) * 100))
-        transaction_id = add_transaction(
-            amount_cents=amount_cents,
-            currency=params.get("currency", "USD"),
-            category=params.get("category", "uncategorized"),
-            merchant=params.get("merchant"),
-            ts=params.get("occurred_at"),
-        )
-        audit_event("orchestrate_finance_add", transaction_id=transaction_id)
-        result = ActionResult(
-            action=action,
-            parameters=params,
-            result={"id": transaction_id, "amount_cents": amount_cents},
-        )
-        amount_usd = amount_cents / 100
-        return f"Recorded ${amount_usd:.2f} in {params.get('category', 'uncategorized')}.", [result]
-    if action == "finance.list_transactions":
-        results = list_transactions(limit=params.get("limit", 50), category=params.get("category"))
-        audit_event("orchestrate_finance_list", count=len(results))
-        result = ActionResult(action=action, parameters=params, result={"results": results})
-        return f"Listed {len(results)} transactions.", [result]
-    if action == "finance.summary":
-        report = summary(period=params.get("period", "week"), group_by=params.get("group_by", "category"))
-        audit_event("orchestrate_finance_summary", period=report["period"])
-        result = ActionResult(action=action, parameters=params, result={"report": report})
-        return "Generated finance summary.", [result]
-    if action == "files.list":
-        files = list_sandbox_files()
-        result = ActionResult(action=action, parameters=params, result={"files": files})
-        return f"Listed {len(files)} sandbox files.", [result]
-    if action == "files.read":
-        content = read_sandbox_file(params["path"])
-        result = ActionResult(action=action, parameters=params, result={"content": content})
-        return f"Read {params['path']} ({len(content)} chars).", [result]
-    if action == "files.write":
-        write_sandbox_file(params["path"], params.get("content", ""), params.get("mode", "overwrite"))
-        result = ActionResult(action=action, parameters=params, result={"ok": True})
-        return f"Wrote {params['path']} using {params.get('mode', 'overwrite')} mode.", [result]
-    return "No action executed.", []
+    handler = TOOL_REGISTRY.get(action)
+    if handler is None:
+        return "No action executed.", []
+    message, result = handler(params)
+    return message, [result]
 
 
 def _unknown_intent_response(text: str) -> OrchestrateErrorResponse:
@@ -387,64 +298,33 @@ def _apply_cognitive_layer(
     context: dict[str, object],
     decision_path: list[str],
 ) -> tuple[Intent | None, dict[str, object]]:
-    advisor = DecisionAdvisor()
-    built = advisor.build_intent_from_signals(signals, dict(context))
-    seed_action = intent.action
-    seed_params = intent.parameters
-    if intent.action in {"unknown.action", "noop"}:
-        seed_action = built.action
-        seed_params = built.parameters
-        decision_path.append(f"cognition:signals_seed:{seed_action}")
-
-    plan = advisor.evaluate(
-        intent_action=seed_action,
-        intent_params=seed_params,
-        user_text=text,
-        context=dict(context),
+    cognition = _COGNITION.run(
+        session_id=str(context.get("session_id", "default")),
+        text=text,
+        context={
+            "hinted_action": intent.action if intent.action not in {"unknown.action", "noop"} else "",
+            "hinted_parameters": intent.parameters,
+            "confirmation_token": context.get("confirmation_token"),
+            "cognition_config": {"blocked_actions": ["admin.delete_user"]},
+        },
+        memory_candidates=list(context.get("memory_candidates", [])),
     )
-    policy_result = evaluate_candidates(plan.candidates)
-    reranked = advisor.rerank_after_policy(
-        plan=plan,
-        allowed_actions=policy_result.allowed_actions,
-        denied_reasons=policy_result.denied_reasons,
+    policy = enforce_policy_gate(
+        action=cognition.intent.action,
+        risk=cognition.decision.risk,
+        confirmation_token=str(context.get("confirmation_token") or ""),
     )
-    audit_event(
-        "cognition.plan",
-        trace_id=plan.trace_id,
-        intent_action=intent.action,
-        candidates=[candidate.model_dump() for candidate in plan.candidates],
-        policy_decisions=[decision.model_dump() for decision in policy_result.decisions],
-        reranked=[candidate.model_dump() for candidate in reranked.candidates],
-    )
-    if reranked.selected is None:
-        decision_path.append("cognition:no_allowed_candidates")
-        audit_event("cognition.selection", trace_id=plan.trace_id, selected_action=None, reason="no_allowed_candidates")
-        return None, {"trace_id": plan.trace_id, "notes": reranked.notes, "built_intent": built.model_dump()}
-
-    selected = reranked.selected
-    reason = "top_allowed_candidate"
-    audit_event(
-        "cognition.selection",
-        trace_id=plan.trace_id,
-        selected_action=selected.action,
-        score=selected.score_total,
-        reason=reason,
-    )
-    decision_path.append(f"cognition:selected:{selected.action}")
-    if selected.action == "clarify":
-        return None, {"trace_id": plan.trace_id, "clarify": selected.parameters, "notes": reranked.notes, "built_intent": built.model_dump()}
-    schema = _ARG_SCHEMAS.get(selected.action)
+    decision_path.append(f"cognition:mode:{cognition.decision.mode}")
+    if cognition.decision.mode in {"clarify", "refuse", "suggest"} or not policy.action_allowed:
+        return None, cognition.model_dump()
+    schema = _ARG_SCHEMAS.get(cognition.intent.action)
     if schema is None:
-        return None, {"trace_id": plan.trace_id, "notes": reranked.notes, "error": "action_not_executable", "built_intent": built.model_dump()}
+        return None, cognition.model_dump() | {"error": "action_not_executable"}
     try:
-        parsed_args = schema.model_validate(selected.parameters)
+        parsed_args = schema.model_validate(cognition.intent.parameters)
     except ValidationError:
-        return None, {"trace_id": plan.trace_id, "notes": reranked.notes, "error": "invalid_candidate_parameters", "built_intent": built.model_dump()}
-    return Intent(action=selected.action, parameters=parsed_args.model_dump(), confidence=intent.confidence), {
-        "trace_id": plan.trace_id,
-        "notes": reranked.notes,
-        "built_intent": built.model_dump(),
-    }
+        return None, cognition.model_dump() | {"error": "invalid_candidate_parameters"}
+    return Intent(action=cognition.intent.action, parameters=parsed_args.model_dump(), confidence=cognition.intent.confidence), cognition.model_dump()
 
 
 def route_intent(
@@ -525,9 +405,10 @@ def route_intent(
                     executed=True,
                     result=result,
                 )
-            if selected_intent is None and cognition_meta.get("clarify"):
-                clarify = cognition_meta["clarify"]
-                question = clarify.get("question") if isinstance(clarify, dict) else None
+            if selected_intent is None:
+                question = cognition_meta.get("decision", {}).get("clarification_question") if isinstance(cognition_meta, dict) else None
+                if cognition_meta.get("decision", {}).get("requires_confirmation"):
+                    return _clarify_response("High-risk action detected. Reply with CONFIRM to continue.")
                 return _clarify_response(question if isinstance(question, str) else None)
 
         regex_finance_intent = _regex_finance_candidate(text)
@@ -565,9 +446,10 @@ def route_intent(
                     executed=True,
                     result=result,
                 )
-            if selected_intent is None and cognition_meta.get("clarify"):
-                clarify = cognition_meta["clarify"]
-                question = clarify.get("question") if isinstance(clarify, dict) else None
+            if selected_intent is None:
+                question = cognition_meta.get("decision", {}).get("clarification_question") if isinstance(cognition_meta, dict) else None
+                if cognition_meta.get("decision", {}).get("requires_confirmation"):
+                    return _clarify_response("High-risk action detected. Reply with CONFIRM to continue.")
                 return _clarify_response(question if isinstance(question, str) else None)
 
         tool_domains = _tool_domains_in_text(text)
@@ -585,11 +467,10 @@ def route_intent(
                 decision_path=decision_path,
             )
             if selected_intent is None:
-                question: str | None = None
-                if isinstance(cognition_meta.get("clarify"), dict):
-                    clarify = cognition_meta["clarify"]
-                    question = clarify.get("question") if isinstance(clarify.get("question"), str) else None
-                return _clarify_response(question)
+                if cognition_meta.get("decision", {}).get("requires_confirmation"):
+                    return _clarify_response("High-risk action detected. Reply with CONFIRM to continue.")
+                question = cognition_meta.get("decision", {}).get("clarification_question") if isinstance(cognition_meta, dict) else None
+                return _clarify_response(question if isinstance(question, str) else None)
             selected_intent = validate_intent(selected_intent)
             if selected_intent.action != "noop":
                 message, actions = _execute_intent(selected_intent)
@@ -694,7 +575,10 @@ def route_intent(
     if debug_enabled:
         debug_extras["cognition"] = cognition_meta
     if selected_intent is None:
-        return _clarify_response("I need clarification because no allowed candidate action remained.")
+        if cognition_meta.get("decision", {}).get("requires_confirmation"):
+            return _clarify_response("High-risk action detected. Reply with CONFIRM to continue.")
+        question = cognition_meta.get("decision", {}).get("clarification_question") if isinstance(cognition_meta, dict) else None
+        return _clarify_response(question if isinstance(question, str) else "I need clarification because no allowed candidate action remained.")
     validated_intent = validate_intent(selected_intent)
     confidence = validated_intent.confidence
 
