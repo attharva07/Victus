@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from victus.ui_state import (
     DialogueSendRequest,
@@ -30,7 +30,16 @@ from core.camera.service import CameraService
 from core.config import ensure_directories, get_orchestrator_config
 from core.filesystem.sandbox import FileSandboxError
 from core.filesystem.service import list_sandbox_files, read_sandbox_file, write_sandbox_file
-from core.finance.service import add_transaction, list_transactions, summary
+from core.finance.service import (
+    add_transaction,
+    generate_finance_brief,
+    get_rule_thresholds,
+    list_alerts,
+    list_behavior_logs,
+    list_transactions,
+    set_rule_threshold,
+    summary,
+)
 from core.logging.audit import audit_event, safe_excerpt, text_hash
 from core.logging.logger import get_logger
 from core.memory.service import add_memory, delete_memory, list_recent, search_memories
@@ -83,6 +92,21 @@ class FileWriteRequest(BaseModel):
     path: str
     content: str
     mode: str = "overwrite"
+
+
+class FinanceRuleUpdateRequest(BaseModel):
+    rule_key: str
+    threshold_value: float
+    enabled: bool = True
+
+
+class FinanceBriefRequest(BaseModel):
+    cards: list[dict[str, object]] = Field(default_factory=list)
+    budget: dict[str, object] = Field(default_factory=dict)
+    savings_goals: list[dict[str, object]] = Field(default_factory=list)
+    holdings: list[dict[str, object]] = Field(default_factory=list)
+    watchlist: list[dict[str, object]] = Field(default_factory=list)
+    paycheck_days: list[int] | None = None
 
 
 class CameraCaptureRequest(BaseModel):
@@ -301,6 +325,47 @@ def create_app() -> FastAPI:
     ) -> dict[str, object]:
         report = summary(period=period, start_ts=start_ts, end_ts=end_ts, group_by="category")
         return {"report": report}
+
+    @app.post("/finance/intelligence/brief")
+    def finance_intelligence_brief(
+        payload: FinanceBriefRequest = Body(default_factory=FinanceBriefRequest),
+        user: str = Depends(require_user),
+    ) -> dict[str, object]:
+        transactions = list_transactions(limit=300)
+        snapshot = {
+            "transactions": transactions,
+            "summary": summary(period="month", group_by="category"),
+            "cards": payload.cards,
+            "budget": payload.budget,
+            "savings_goals": payload.savings_goals,
+            "holdings": payload.holdings,
+            "watchlist": payload.watchlist,
+            "paycheck_days": payload.paycheck_days or [],
+        }
+        return generate_finance_brief(snapshot)
+
+    @app.get("/finance/alerts")
+    def finance_alerts(
+        limit: int = Query(default=100, ge=1, le=500),
+        user: str = Depends(require_user),
+    ) -> dict[str, object]:
+        return {"alerts": list_alerts(limit=limit)}
+
+    @app.get("/finance/behavior")
+    def finance_behavior(
+        limit: int = Query(default=100, ge=1, le=500),
+        user: str = Depends(require_user),
+    ) -> dict[str, object]:
+        return {"behavior_logs": list_behavior_logs(limit=limit)}
+
+    @app.get("/finance/rules")
+    def finance_rules(user: str = Depends(require_user)) -> dict[str, object]:
+        return {"rules": get_rule_thresholds()}
+
+    @app.post("/finance/rules")
+    def finance_rules_update(payload: FinanceRuleUpdateRequest, user: str = Depends(require_user)) -> dict[str, object]:
+        updated = set_rule_threshold(payload.rule_key, payload.threshold_value, payload.enabled)
+        return {"rule": updated}
 
     @app.get("/files/list")
     def files_list(user: str = Depends(require_user)) -> dict[str, object]:

@@ -73,3 +73,72 @@ def test_finance_add_list_summary(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
     assert summary_response.status_code == 200
     report = summary_response.json()["report"]
     assert report["totals"]["coffee"] >= 325
+
+
+def test_finance_intelligence_brief_and_rule_endpoints(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    client = _client_with_env(monkeypatch, tmp_path)
+    headers = _auth_headers(client)
+
+    client.post(
+        "/finance/add",
+        json={"amount": 120.0, "currency": "USD", "category": "dining", "merchant": "Diner"},
+        headers=headers,
+    )
+
+    rules_get = client.get("/finance/rules", headers=headers)
+    assert rules_get.status_code == 200
+    assert "credit_utilization_urgent" in rules_get.json()["rules"]
+
+    rules_set = client.post(
+        "/finance/rules",
+        json={"rule_key": "budget_category_warning_percent", "threshold_value": 0.7, "enabled": True},
+        headers=headers,
+    )
+    assert rules_set.status_code == 200
+
+    brief = client.post(
+        "/finance/intelligence/brief",
+        json={
+            "cards": [
+                {
+                    "id": "card-1",
+                    "name": "Visa",
+                    "credit_limit_cents": 100000,
+                    "current_balance_cents": 90000,
+                    "due_in_days": 1,
+                    "statement_in_days": 2,
+                    "autopay_enabled": False,
+                }
+            ],
+            "budget": {"id": "b1", "total_limit_cents": 50000, "categories": {"dining": 10000}},
+            "savings_goals": [
+                {
+                    "id": "goal-1",
+                    "name": "Emergency Fund",
+                    "monthly_contribution_cents": 20000,
+                    "contributed_this_month_cents": 5000,
+                    "is_emergency_fund": True,
+                    "current_cents": 40000,
+                    "emergency_target_cents": 100000,
+                }
+            ],
+            "holdings": [
+                {"id": "h1", "symbol": "AAPL", "market_value_cents": 90000, "volatility_score": 0.8}
+            ],
+            "watchlist": [{"id": "w1", "symbol": "TSLA", "review_in_days": 0}],
+            "paycheck_days": [15],
+        },
+        headers=headers,
+    )
+    assert brief.status_code == 200
+    payload = brief.json()
+    assert "alerts" in payload
+    assert "recommendations" in payload
+
+    alerts = client.get("/finance/alerts", headers=headers)
+    assert alerts.status_code == 200
+    assert isinstance(alerts.json()["alerts"], list)
+
+    behavior = client.get("/finance/behavior", headers=headers)
+    assert behavior.status_code == 200
+    assert isinstance(behavior.json()["behavior_logs"], list)
