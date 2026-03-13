@@ -172,7 +172,7 @@ def get_security_config() -> SecurityConfig:
     enabled_tools_raw = os.getenv(
         "VICTUS_ENABLED_TOOLS",
         "camera.status,camera.capture,camera.recognize,memory.add,memory.search,memory.list,memory.delete,"
-        "finance.add_transaction,finance.list_transactions,finance.summary,files.list,files.read,files.write,chat.reply,noop",
+        "finance.add_transaction,finance.list_transactions,finance.summary,memory.create_note,mail.list_threads,mail.summarize_thread,files.list,files.read,files.write,files.create_workspace,files.generate_project_scaffold,chat.reply,noop",
     )
     enabled_tools = tuple(token.strip() for token in enabled_tools_raw.split(",") if token.strip())
 
