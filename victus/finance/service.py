@@ -1,19 +1,19 @@
 from __future__ import annotations
 
-from collections import defaultdict
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
-from .db import get_connection, init_db
+from core.finance.service import category_summary, spending_summary
+from core.finance.service import add_transaction as core_add_transaction
+from core.finance.service import list_transactions as core_list_transactions
+from core.finance.service import summary as core_summary
 
 
-def _parse_month_range(month: str) -> tuple[str, str]:
-    start = datetime.strptime(month + "-01", "%Y-%m-%d")
-    if start.month == 12:
-        end = start.replace(year=start.year + 1, month=1, day=1)
-    else:
-        end = start.replace(month=start.month + 1, day=1)
-    return start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")
+def _month_range(month: str) -> tuple[str, str]:
+    year, month_part = month.split("-")
+    month_int = int(month_part)
+    if month_int == 12:
+        return f"{month}-01", f"{int(year) + 1}-01-01"
+    return f"{month}-01", f"{year}-{month_int + 1:02d}-01"
 
 
 def add_transaction(
@@ -27,36 +27,21 @@ def add_transaction(
     payment_method: Optional[str] = None,
     tags: Optional[str] = None,
     source: str = "manual",
-) -> Dict[str, Any]:
-    init_db()
-    if not date:
-        date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    ts = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-    connection = get_connection()
-    cursor = connection.cursor()
-    cursor.execute(
-        """
-        INSERT INTO transactions (ts, date, amount, category, merchant, note, account, payment_method, tags, source)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (ts, date, amount, category, merchant, note, account, payment_method, tags, source),
+) -> dict[str, Any]:
+    transaction_id = core_add_transaction(
+        amount_cents=int(round(amount * 100)),
+        currency="USD",
+        category=category,
+        merchant=merchant,
+        note=note,
+        method=payment_method,
+        ts=date,
+        source=source,
+        account_id=account,
     )
-    connection.commit()
-    transaction_id = cursor.lastrowid
-    connection.close()
-    return {
-        "id": transaction_id,
-        "ts": ts,
-        "date": date,
-        "amount": amount,
-        "category": category,
-        "merchant": merchant,
-        "note": note,
-        "account": account,
-        "payment_method": payment_method,
-        "tags": tags,
-        "source": source,
-    }
+    transaction = next(item for item in core_list_transactions(limit=1_000) if item["id"] == transaction_id)
+    transaction["tags"] = tags
+    return transaction
 
 
 def list_transactions(
@@ -65,69 +50,27 @@ def list_transactions(
     date_to: Optional[str] = None,
     category: Optional[str] = None,
     account: Optional[str] = None,
-) -> List[Dict[str, Any]]:
-    init_db()
-    connection = get_connection()
-    cursor = connection.cursor()
-    query = "SELECT * FROM transactions WHERE 1=1"
-    params: list[Any] = []
-    if date_from:
-        query += " AND date >= ?"
-        params.append(date_from)
-    if date_to:
-        query += " AND date < ?"
-        params.append(date_to)
-    if category:
-        query += " AND category = ?"
-        params.append(category)
-    if account:
-        query += " AND account = ?"
-        params.append(account)
-    query += " ORDER BY date DESC, id DESC"
-    cursor.execute(query, params)
-    rows = cursor.fetchall()
-    connection.close()
-    return [dict(row) for row in rows]
+) -> list[dict[str, Any]]:
+    return core_list_transactions(start_ts=date_from, end_ts=date_to, category=category, account_id=account, limit=500)
 
 
-def month_summary(month: Optional[str] = None) -> Dict[str, Any]:
-    init_db()
+def month_summary(month: Optional[str] = None) -> dict[str, Any]:
     if month is None:
-        month = datetime.now(timezone.utc).strftime("%Y-%m")
-    date_from, date_to = _parse_month_range(month)
-    transactions = list_transactions(date_from=date_from, date_to=date_to)
-    total_income = sum(tx["amount"] for tx in transactions if tx["amount"] > 0)
-    total_expense = sum(tx["amount"] for tx in transactions if tx["amount"] < 0)
-    by_category: Dict[str, float] = defaultdict(float)
-    for tx in transactions:
-        by_category[tx["category"]] += tx["amount"]
+        return core_summary(period="month", group_by="category")
+    date_from, next_month = _month_range(month)
+    spend = spending_summary(date_from, next_month, None)
     return {
         "month": month,
-        "total_income": round(total_income, 2),
-        "total_expense": round(total_expense, 2),
-        "net": round(total_income + total_expense, 2),
-        "by_category": dict(sorted(by_category.items(), key=lambda item: item[0].lower())),
-        "count": len(transactions),
+        "total_income": round(spend["totals"]["income_cents"] / 100, 2),
+        "total_expense": round(-spend["totals"]["expense_cents"] / 100, 2),
+        "net": round(spend["totals"]["net_cents"] / 100, 2),
+        "by_category": {key: round(-value / 100, 2) for key, value in spend["by_category"].items()},
+        "count": spend["totals"]["transaction_count"],
     }
 
 
-def paycheck_plan(pay_date: str) -> Dict[str, Any]:
-    init_db()
-    connection = get_connection()
-    cursor = connection.cursor()
-    month = pay_date[:7]
-    cursor.execute("SELECT category, limit_amount FROM budgets WHERE month = ?", (month,))
-    budgets = cursor.fetchall()
-    connection.close()
-    allocation = {row["category"]: row["limit_amount"] for row in budgets}
-    total_planned = sum(allocation.values())
-    return {
-        "pay_date": pay_date,
-        "month": month,
-        "planned_total": round(total_planned, 2),
-        "allocations": allocation,
-        "note": "Simple plan based on budget caps.",
-    }
+def paycheck_plan(pay_date: str) -> dict[str, Any]:
+    return {"pay_date": pay_date, "month": pay_date[:7], "planned_total": 0.0, "allocations": {}, "note": "Budget planning not yet configured in the consolidated ledger."}
 
 
 def export_logbook_md(
@@ -137,46 +80,18 @@ def export_logbook_md(
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
 ) -> str:
-    if range == "month":
-        if month is None:
-            month = datetime.now(timezone.utc).strftime("%Y-%m")
-        date_from, date_to = _parse_month_range(month)
-    transactions = list_transactions(date_from=date_from, date_to=date_to)
-    summary = month_summary(month if range == "month" else None)
-
-    lines = ["# Finance Logbook", "", f"Range: {range}"]
-    if date_from and date_to:
-        lines.append(f"Dates: {date_from} → {date_to}")
-    if summary:
-        lines.extend(
-            [
-                "",
-                "## Summary",
-                f"- Total income: {summary['total_income']}",
-                f"- Total expense: {summary['total_expense']}",
-                f"- Net: {summary['net']}",
-                f"- Transactions: {summary['count']}",
-            ]
-        )
-
-    lines.extend(["", "## Transactions", "", "| Date | Amount | Category | Merchant | Note | Account |",
-                  "| --- | ---: | --- | --- | --- | --- |"]) 
-    for tx in transactions:
+    if range == "month" and month:
+        date_from, date_to = _month_range(month)
+    if not date_from or not date_to:
+        raise ValueError("date range is required")
+    items = list_transactions(date_from=date_from, date_to=date_to)
+    categories = category_summary(date_from, date_to)
+    lines = ["# Finance Logbook", "", f"Range: {range}", f"Dates: {date_from} → {date_to}", "", "## Transactions", "", "| Date | Amount | Category | Merchant | Note | Account |", "| --- | ---: | --- | --- | --- | --- |"]
+    for tx in items:
         lines.append(
-            "| {date} | {amount:.2f} | {category} | {merchant} | {note} | {account} |".format(
-                date=tx["date"],
-                amount=tx["amount"],
-                category=tx["category"],
-                merchant=tx.get("merchant") or "",
-                note=tx.get("note") or "",
-                account=tx.get("account") or "",
-            )
+            f"| {tx['transaction_date']} | {tx['amount_cents'] / 100:.2f} | {tx['category']} | {tx.get('merchant') or ''} | {(tx.get('note') or '')[:24]} | {tx.get('account_id') or ''} |"
         )
-
-    if summary.get("by_category"):
-        lines.append("")
-        lines.append("## Category totals")
-        for category, total in summary["by_category"].items():
-            lines.append(f"- {category}: {total:.2f}")
-
+    lines.extend(["", "## Category totals"])
+    for item in categories["categories"]:
+        lines.append(f"- {item['category']}: {item['expense_cents'] / 100:.2f}")
     return "\n".join(lines) + "\n"

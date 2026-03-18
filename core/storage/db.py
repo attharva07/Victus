@@ -41,16 +41,29 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS transactions (
                 id TEXT PRIMARY KEY,
                 ts TEXT,
+                transaction_date TEXT,
                 amount_cents INTEGER,
                 currency TEXT,
                 category TEXT,
                 merchant TEXT,
                 note TEXT,
+                account_id TEXT,
                 method TEXT,
-                source TEXT
+                source TEXT,
+                created_at TEXT,
+                updated_at TEXT
             )
             """
         )
+        transaction_columns = {row[1] for row in conn.execute("PRAGMA table_info(transactions)").fetchall()}
+        if "transaction_date" not in transaction_columns:
+            conn.execute("ALTER TABLE transactions ADD COLUMN transaction_date TEXT")
+        if "account_id" not in transaction_columns:
+            conn.execute("ALTER TABLE transactions ADD COLUMN account_id TEXT")
+        if "created_at" not in transaction_columns:
+            conn.execute("ALTER TABLE transactions ADD COLUMN created_at TEXT")
+        if "updated_at" not in transaction_columns:
+            conn.execute("ALTER TABLE transactions ADD COLUMN updated_at TEXT")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS finance_accounts (
@@ -60,6 +73,16 @@ def init_db() -> None:
                 institution TEXT,
                 is_active INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS finance_categories (
+                key TEXT PRIMARY KEY,
+                display_name TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
             )
             """
         )
