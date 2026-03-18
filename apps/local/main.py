@@ -13,7 +13,22 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from core.finance.policy import FinanceNotFoundError, FinancePolicyError, FinanceValidationError
-from core.finance.schemas import AccountUpsert, SpendingSummaryRequest, TransactionUpdate, TransactionWrite
+from core.finance.schemas import (
+    AccountCreate,
+    AccountUpdate,
+    BillCreate,
+    BillUpdate,
+    BudgetCreate,
+    BudgetUpdate,
+    CategoryCreate,
+    CategoryUpdate,
+    SavingsGoalCreate,
+    SavingsGoalUpdate,
+    SavingsProgressUpdate,
+    SpendingSummaryRequest,
+    TransactionUpdate,
+    TransactionWrite,
+)
 
 from victus.ui_state import (
     DialogueSendRequest,
@@ -34,6 +49,7 @@ from core.config import ensure_directories, get_orchestrator_config
 from core.filesystem.sandbox import FileSandboxError
 from core.filesystem.service import list_sandbox_files, read_sandbox_file, write_sandbox_file
 from core.finance.service import (
+    FinanceService,
     add_transaction,
     category_summary,
     delete_transaction,
@@ -96,10 +112,6 @@ class FinanceUpdateRequest(TransactionUpdate):
     pass
 
 
-class FinanceAccountRequest(AccountUpsert):
-    pass
-
-
 class FileWriteRequest(BaseModel):
     path: str
     content: str
@@ -114,7 +126,8 @@ class FinanceRuleUpdateRequest(BaseModel):
 
 class FinanceBriefRequest(BaseModel):
     cards: list[dict[str, object]] = Field(default_factory=list)
-    budget: dict[str, object] = Field(default_factory=dict)
+    budgets: list[dict[str, object]] = Field(default_factory=list)
+    bills: list[dict[str, object]] = Field(default_factory=list)
     savings_goals: list[dict[str, object]] = Field(default_factory=list)
     holdings: list[dict[str, object]] = Field(default_factory=list)
     watchlist: list[dict[str, object]] = Field(default_factory=list)
@@ -139,6 +152,7 @@ def create_app() -> FastAPI:
     ensure_directories()
     get_logger()
     app = FastAPI(title="Victus Local")
+    finance_service = FinanceService()
 
     @app.exception_handler(Exception)
     async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
@@ -164,10 +178,13 @@ def create_app() -> FastAPI:
     camera_service = CameraService()
     dist_dir = Path(__file__).resolve().parents[2] / "apps" / "web" / "dist"
 
+    # -----------------------------------------------------------------------
+    # Health / UI
+    # -----------------------------------------------------------------------
+
     @app.get("/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
-
 
     @app.get("/api/health")
     def api_health() -> dict[str, str]:
@@ -196,6 +213,10 @@ def create_app() -> FastAPI:
     @app.post("/api/dialogue/send", response_model=UIState)
     def api_dialogue_send(payload: DialogueSendRequest) -> UIState:
         return dialogue_send(payload.message)
+
+    # -----------------------------------------------------------------------
+    # Auth / Bootstrap
+    # -----------------------------------------------------------------------
 
     @app.post("/login", response_model=LoginResponse)
     def login(payload: LoginRequest) -> LoginResponse:
@@ -277,6 +298,10 @@ def create_app() -> FastAPI:
         )
         return route_intent(payload, llm_provider)
 
+    # -----------------------------------------------------------------------
+    # Memory
+    # -----------------------------------------------------------------------
+
     @app.post("/memory/add")
     def memory_add(payload: MemoryAddRequest, user: str = Depends(require_user)) -> dict[str, str]:
         memory_id = add_memory(
@@ -313,20 +338,66 @@ def create_app() -> FastAPI:
         deleted = delete_memory(memory_id)
         return {"deleted": deleted}
 
-    @app.post("/finance/accounts")
-    def finance_account_upsert(payload: FinanceAccountRequest, user: str = Depends(require_user)) -> dict[str, object]:
-        _ = user
-        return upsert_account(**payload.model_dump())
+    # -----------------------------------------------------------------------
+    # Finance — Accounts
+    # -----------------------------------------------------------------------
 
-    @app.post("/finance/add")
-    def finance_add(payload: FinanceAddRequest, user: str = Depends(require_user)) -> dict[str, str]:
+    @app.post("/finance/accounts")
+    def finance_account_create(payload: AccountCreate, user: str = Depends(require_user)) -> dict[str, object]:
+        _ = user
+        response = finance_service.create_account(payload)
+        return response.model_dump()
+
+    @app.get("/finance/accounts")
+    def finance_accounts_list(user: str = Depends(require_user)) -> dict[str, object]:
+        _ = user
+        response = finance_service.list_accounts()
+        return response.model_dump()
+
+    @app.get("/finance/accounts/{account_id}")
+    def finance_account_get(account_id: str, user: str = Depends(require_user)) -> dict[str, object]:
+        _ = user
+        response = finance_service.get_account(account_id)
+        return response.model_dump()
+
+    @app.patch("/finance/accounts/{account_id}")
+    def finance_account_update(account_id: str, payload: AccountUpdate, user: str = Depends(require_user)) -> dict[str, object]:
+        _ = user
+        response = finance_service.update_account(account_id, payload)
+        return response.model_dump()
+
+    # -----------------------------------------------------------------------
+    # Finance — Categories
+    # -----------------------------------------------------------------------
+
+    @app.post("/finance/categories")
+    def finance_category_create(payload: CategoryCreate, user: str = Depends(require_user)) -> dict[str, object]:
+        _ = user
+        return finance_service.create_category(payload).model_dump()
+
+    @app.get("/finance/categories")
+    def finance_categories_list(user: str = Depends(require_user)) -> dict[str, object]:
+        _ = user
+        return finance_service.list_categories().model_dump()
+
+    @app.patch("/finance/categories/{category_id}")
+    def finance_category_update(category_id: str, payload: CategoryUpdate, user: str = Depends(require_user)) -> dict[str, object]:
+        _ = user
+        return finance_service.update_category(category_id, payload).model_dump()
+
+    # -----------------------------------------------------------------------
+    # Finance — Transactions (Ledger Core)
+    # -----------------------------------------------------------------------
+
+    @app.post("/finance/transactions")
+    def finance_add(payload: FinanceAddRequest, user: str = Depends(require_user)) -> dict[str, object]:
         transaction_id = add_transaction(
             amount_cents=payload.amount_cents,
             currency=payload.currency,
             category=payload.category or "uncategorized",
             merchant=payload.merchant,
-            note=payload.note,
-            method=payload.method,
+            note=payload.notes,
+            method=payload.payment_method,
             source=user,
             account_id=payload.account_id,
             ts=payload.transaction_date.isoformat(),
@@ -345,41 +416,36 @@ def create_app() -> FastAPI:
         user: str = Depends(require_user),
     ) -> dict[str, object]:
         _ = user
-        return {"transaction": update_transaction(transaction_id, **payload.model_dump(exclude_unset=True))}
+        updates = payload.model_dump(exclude_unset=True)
+        if "notes" in updates:
+            updates["note"] = updates.pop("notes")
+        if "payment_method" in updates:
+            updates["method"] = updates.pop("payment_method")
+        return {"transaction": update_transaction(transaction_id, **updates)}
 
     @app.delete("/finance/transactions/{transaction_id}")
     def finance_delete_transaction(transaction_id: str, user: str = Depends(require_user)) -> dict[str, object]:
         _ = user
         return delete_transaction(transaction_id)
 
-    @app.get("/finance/list")
+    @app.get("/finance/transactions")
     def finance_list(
         category: str | None = Query(default=None),
         account_id: str | None = Query(default=None),
         date_from: str | None = Query(default=None),
         date_to: str | None = Query(default=None),
-        limit: int = Query(default=50, ge=1, le=200),
+        direction: str | None = Query(default=None),
+        merchant: str | None = Query(default=None),
+        limit: int = Query(default=50, ge=1, le=500),
         user: str = Depends(require_user),
     ) -> dict[str, object]:
         _ = user
         results = list_transactions(start_ts=date_from, end_ts=date_to, category=category, account_id=account_id, limit=limit)
-        return {"results": results}
+        return {"results": results, "count": len(results)}
 
-    @app.get("/finance/summary")
-    def finance_summary(
-        period: str = Query(default="week"),
-        start_ts: str | None = Query(default=None),
-        end_ts: str | None = Query(default=None),
-        account_id: str | None = Query(default=None),
-        user: str = Depends(require_user),
-    ) -> dict[str, object]:
-        _ = user
-        report = summary(period=period, start_ts=start_ts, end_ts=end_ts, group_by="category")
-        if period == "custom" and start_ts and end_ts:
-            spending = spending_summary(start_ts[:10], end_ts[:10], account_id=account_id)
-            categories = category_summary(start_ts[:10], end_ts[:10], account_id=account_id)
-            return {"report": report, "spending": spending, "categories": categories}
-        return {"report": report}
+    # -----------------------------------------------------------------------
+    # Finance — Summaries
+    # -----------------------------------------------------------------------
 
     @app.get("/finance/spending-summary")
     def finance_spending_summary(
@@ -403,6 +469,159 @@ def create_app() -> FastAPI:
         request = SpendingSummaryRequest(date_from=date_from, date_to=date_to, account_id=account_id)
         return {"summary": category_summary(request.date_from.isoformat(), request.date_to.isoformat(), request.account_id)}
 
+    @app.get("/finance/account-summary")
+    def finance_account_summary(
+        date_from: str = Query(...),
+        date_to: str = Query(...),
+        user: str = Depends(require_user),
+    ) -> dict[str, object]:
+        _ = user
+        request = SpendingSummaryRequest(date_from=date_from, date_to=date_to)
+        return {"summary": finance_service.get_account_summary(request).model_dump()}
+
+    @app.get("/finance/summary")
+    def finance_summary(
+        period: str = Query(default="week"),
+        start_ts: str | None = Query(default=None),
+        end_ts: str | None = Query(default=None),
+        account_id: str | None = Query(default=None),
+        user: str = Depends(require_user),
+    ) -> dict[str, object]:
+        _ = user
+        report = summary(period=period, start_ts=start_ts, end_ts=end_ts, group_by="category")
+        if period == "custom" and start_ts and end_ts:
+            spending = spending_summary(start_ts[:10], end_ts[:10], account_id=account_id)
+            categories = category_summary(start_ts[:10], end_ts[:10], account_id=account_id)
+            return {"report": report, "spending": spending, "categories": categories}
+        return {"report": report}
+
+    # -----------------------------------------------------------------------
+    # Finance — Budgets
+    # -----------------------------------------------------------------------
+
+    @app.post("/finance/budgets")
+    def finance_budget_create(payload: BudgetCreate, user: str = Depends(require_user)) -> dict[str, object]:
+        _ = user
+        return finance_service.create_budget(payload).model_dump()
+
+    @app.get("/finance/budgets")
+    def finance_budgets_list(user: str = Depends(require_user)) -> dict[str, object]:
+        _ = user
+        return finance_service.list_budgets().model_dump()
+
+    @app.patch("/finance/budgets/{budget_id}")
+    def finance_budget_update(budget_id: str, payload: BudgetUpdate, user: str = Depends(require_user)) -> dict[str, object]:
+        _ = user
+        return finance_service.update_budget(budget_id, payload).model_dump()
+
+    @app.delete("/finance/budgets/{budget_id}")
+    def finance_budget_delete(budget_id: str, user: str = Depends(require_user)) -> dict[str, object]:
+        _ = user
+        return finance_service.delete_budget(budget_id).model_dump()
+
+    @app.get("/finance/budgets/status")
+    def finance_budget_status(user: str = Depends(require_user)) -> dict[str, object]:
+        _ = user
+        return finance_service.get_budget_status().model_dump()
+
+    # -----------------------------------------------------------------------
+    # Finance — Bills / Obligations
+    # -----------------------------------------------------------------------
+
+    @app.post("/finance/bills")
+    def finance_bill_create(payload: BillCreate, user: str = Depends(require_user)) -> dict[str, object]:
+        _ = user
+        return finance_service.create_bill(payload).model_dump()
+
+    @app.get("/finance/bills")
+    def finance_bills_list(user: str = Depends(require_user)) -> dict[str, object]:
+        _ = user
+        return finance_service.list_bills().model_dump()
+
+    @app.patch("/finance/bills/{bill_id}")
+    def finance_bill_update(bill_id: str, payload: BillUpdate, user: str = Depends(require_user)) -> dict[str, object]:
+        _ = user
+        return finance_service.update_bill(bill_id, payload).model_dump()
+
+    @app.delete("/finance/bills/{bill_id}")
+    def finance_bill_delete(bill_id: str, user: str = Depends(require_user)) -> dict[str, object]:
+        _ = user
+        return finance_service.delete_bill(bill_id).model_dump()
+
+    @app.post("/finance/bills/{bill_id}/paid")
+    def finance_bill_mark_paid(bill_id: str, user: str = Depends(require_user)) -> dict[str, object]:
+        _ = user
+        return finance_service.mark_bill_paid(bill_id).model_dump()
+
+    @app.get("/finance/bills/due")
+    def finance_bills_due(user: str = Depends(require_user)) -> dict[str, object]:
+        _ = user
+        return finance_service.get_due_bills().model_dump()
+
+    # -----------------------------------------------------------------------
+    # Finance — Savings Goals
+    # -----------------------------------------------------------------------
+
+    @app.post("/finance/savings")
+    def finance_savings_create(payload: SavingsGoalCreate, user: str = Depends(require_user)) -> dict[str, object]:
+        _ = user
+        return finance_service.create_savings_goal(payload).model_dump()
+
+    @app.get("/finance/savings")
+    def finance_savings_list(user: str = Depends(require_user)) -> dict[str, object]:
+        _ = user
+        return finance_service.list_savings_goals().model_dump()
+
+    @app.patch("/finance/savings/{goal_id}")
+    def finance_savings_update(goal_id: str, payload: SavingsGoalUpdate, user: str = Depends(require_user)) -> dict[str, object]:
+        _ = user
+        return finance_service.update_savings_goal(goal_id, payload).model_dump()
+
+    @app.post("/finance/savings/{goal_id}/progress")
+    def finance_savings_progress(goal_id: str, payload: SavingsProgressUpdate, user: str = Depends(require_user)) -> dict[str, object]:
+        _ = user
+        return finance_service.record_savings_progress(goal_id, payload).model_dump()
+
+    @app.get("/finance/savings/status")
+    def finance_savings_status(user: str = Depends(require_user)) -> dict[str, object]:
+        _ = user
+        return finance_service.get_savings_status().model_dump()
+
+    # -----------------------------------------------------------------------
+    # Finance — Alerts & Insights & Guidance
+    # -----------------------------------------------------------------------
+
+    @app.get("/finance/alerts")
+    def finance_alerts(
+        limit: int = Query(default=100, ge=1, le=500),
+        user: str = Depends(require_user),
+    ) -> dict[str, object]:
+        _ = user
+        return finance_service.list_alerts(limit=limit).model_dump()
+
+    @app.post("/finance/alerts/{alert_id}/resolve")
+    def finance_alert_resolve(alert_id: str, user: str = Depends(require_user)) -> dict[str, object]:
+        _ = user
+        return finance_service.resolve_alert(alert_id).model_dump()
+
+    @app.get("/finance/insights")
+    def finance_insights(
+        date_from: str = Query(...),
+        date_to: str = Query(...),
+        user: str = Depends(require_user),
+    ) -> dict[str, object]:
+        _ = user
+        return finance_service.get_insights(date_from, date_to).model_dump()
+
+    @app.get("/finance/guidance")
+    def finance_guidance(user: str = Depends(require_user)) -> dict[str, object]:
+        _ = user
+        return finance_service.get_guidance().model_dump()
+
+    # -----------------------------------------------------------------------
+    # Finance — Intelligence Brief
+    # -----------------------------------------------------------------------
+
     @app.post("/finance/intelligence/brief")
     def finance_intelligence_brief(
         payload: FinanceBriefRequest = Body(default_factory=FinanceBriefRequest),
@@ -413,7 +632,8 @@ def create_app() -> FastAPI:
             "transactions": transactions,
             "summary": summary(period="month", group_by="category"),
             "cards": payload.cards,
-            "budget": payload.budget,
+            "budgets": payload.budgets,
+            "bills": payload.bills,
             "savings_goals": payload.savings_goals,
             "holdings": payload.holdings,
             "watchlist": payload.watchlist,
@@ -421,19 +641,9 @@ def create_app() -> FastAPI:
         }
         return generate_finance_brief(snapshot)
 
-    @app.get("/finance/alerts")
-    def finance_alerts(
-        limit: int = Query(default=100, ge=1, le=500),
-        user: str = Depends(require_user),
-    ) -> dict[str, object]:
-        return {"alerts": list_alerts(limit=limit)}
-
-    @app.get("/finance/behavior")
-    def finance_behavior(
-        limit: int = Query(default=100, ge=1, le=500),
-        user: str = Depends(require_user),
-    ) -> dict[str, object]:
-        return {"behavior_logs": list_behavior_logs(limit=limit)}
+    # -----------------------------------------------------------------------
+    # Finance — Rules & Behavior
+    # -----------------------------------------------------------------------
 
     @app.get("/finance/rules")
     def finance_rules(user: str = Depends(require_user)) -> dict[str, object]:
@@ -443,6 +653,17 @@ def create_app() -> FastAPI:
     def finance_rules_update(payload: FinanceRuleUpdateRequest, user: str = Depends(require_user)) -> dict[str, object]:
         updated = set_rule_threshold(payload.rule_key, payload.threshold_value, payload.enabled)
         return {"rule": updated}
+
+    @app.get("/finance/behavior")
+    def finance_behavior(
+        limit: int = Query(default=100, ge=1, le=500),
+        user: str = Depends(require_user),
+    ) -> dict[str, object]:
+        return {"behavior_logs": list_behavior_logs(limit=limit)}
+
+    # -----------------------------------------------------------------------
+    # Files
+    # -----------------------------------------------------------------------
 
     @app.get("/files/list")
     def files_list(user: str = Depends(require_user)) -> dict[str, object]:
@@ -464,6 +685,10 @@ def create_app() -> FastAPI:
         except FileSandboxError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=VictusError(str(exc)).user_message()) from exc
         return {"ok": True}
+
+    # -----------------------------------------------------------------------
+    # Camera
+    # -----------------------------------------------------------------------
 
     @app.get("/camera/status", response_model=CameraStatus)
     def camera_status(request: Request, user: str = Depends(require_user)) -> CameraStatus:
@@ -493,6 +718,10 @@ def create_app() -> FastAPI:
             capture_id=payload.capture_id,
             image_b64=payload.image_b64,
         )
+
+    # -----------------------------------------------------------------------
+    # Static files (web UI)
+    # -----------------------------------------------------------------------
 
     if dist_dir.exists():
 

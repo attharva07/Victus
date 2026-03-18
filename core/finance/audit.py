@@ -4,7 +4,7 @@ from typing import Any
 
 from core.logging.audit import audit_event, safe_excerpt, text_hash
 
-SENSITIVE_FIELDS = {"note", "notes"}
+SENSITIVE_FIELDS = {"notes", "note"}
 
 
 def _redact_field(key: str, value: Any) -> Any:
