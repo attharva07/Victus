@@ -91,11 +91,16 @@ class TransactionWrite(BaseModel):
 
     @field_validator("transaction_date", mode="before")
     @classmethod
-    def validate_transaction_date(cls, value: date | str) -> date:
+    def validate_transaction_date(cls, value: date | str | None) -> date:
+        if value is None:
+            return date.today()
         if isinstance(value, date):
             return value
+        normalized = str(value).strip()
+        if not normalized:
+            return date.today()
         try:
-            return date.fromisoformat(str(value))
+            return date.fromisoformat(normalized)
         except ValueError as exc:
             raise FinanceValidationError("transaction_date must be a valid ISO date (YYYY-MM-DD).") from exc
 

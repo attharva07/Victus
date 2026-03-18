@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import date
+
 from core.domains.files.handlers import create_workspace_handler, generate_project_scaffold_handler
 from core.domains.finance.handlers import add_transaction_handler, list_transactions_handler
 from core.domains.mail.handlers import list_threads_handler, summarize_thread_handler
@@ -50,3 +52,26 @@ def test_mail_handlers_return_clear_not_integrated_behavior():
     assert listed["integration_status"] == "not_configured"
     summarized = summarize_thread_handler({"thread_id": "t-1"}, {})
     assert summarized["integration_status"] == "not_configured"
+
+
+def test_finance_quick_entry_defaults_transaction_date(monkeypatch, tmp_path):
+    monkeypatch.setenv("VICTUS_DATA_DIR", str(tmp_path))
+    bakery = add_transaction_handler({"amount": 8.5, "merchant": "Bakery"}, {"user_id": "atharva"})
+    starbucks = add_transaction_handler({"amount": 6, "merchant": "Starbucks", "transaction_date": None}, {"user_id": "atharva"})
+
+    listed = list_transactions_handler({"limit": 10}, {})["transactions"]
+    ids = {item["id"]: item for item in listed}
+
+    assert ids[bakery["transaction_id"]]["transaction_date"] == date.today().isoformat()
+    assert ids[starbucks["transaction_id"]]["transaction_date"] == date.today().isoformat()
+
+
+def test_finance_quick_entry_rejects_invalid_explicit_date(monkeypatch, tmp_path):
+    monkeypatch.setenv("VICTUS_DATA_DIR", str(tmp_path))
+
+    try:
+        add_transaction_handler({"amount": 6, "merchant": "Starbucks", "transaction_date": "not-a-date"}, {"user_id": "atharva"})
+    except Exception as exc:
+        assert "transaction_date must be a valid ISO date" in str(exc)
+    else:
+        raise AssertionError("Expected invalid explicit transaction_date to fail")
