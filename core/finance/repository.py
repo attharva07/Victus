@@ -209,8 +209,8 @@ class FinanceRepository:
             sql += " AND transaction_date <= ?"
             params.append(date_to)
         if category:
-            sql += " AND category_id = ?"
-            params.append(category)
+            sql += " AND (category_id = ? OR category_id IN (SELECT id FROM finance_categories WHERE LOWER(name) = LOWER(?)))"
+            params.extend([category, category])
         if account_id:
             sql += " AND account_id = ?"
             params.append(account_id)

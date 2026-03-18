@@ -443,6 +443,24 @@ def create_app() -> FastAPI:
         results = list_transactions(start_ts=date_from, end_ts=date_to, category=category, account_id=account_id, limit=limit)
         return {"results": results, "count": len(results)}
 
+    # Backward-compatible aliases for legacy routes
+    @app.post("/finance/add")
+    def finance_add_legacy(payload: FinanceAddRequest, user: str = Depends(require_user)) -> dict[str, object]:
+        return finance_add(payload, user)
+
+    @app.get("/finance/list")
+    def finance_list_legacy(
+        category: str | None = Query(default=None),
+        account_id: str | None = Query(default=None),
+        date_from: str | None = Query(default=None),
+        date_to: str | None = Query(default=None),
+        limit: int = Query(default=50, ge=1, le=200),
+        user: str = Depends(require_user),
+    ) -> dict[str, object]:
+        _ = user
+        results = list_transactions(start_ts=date_from, end_ts=date_to, category=category, account_id=account_id, limit=limit)
+        return {"results": results}
+
     # -----------------------------------------------------------------------
     # Finance — Summaries
     # -----------------------------------------------------------------------
@@ -597,7 +615,8 @@ def create_app() -> FastAPI:
         user: str = Depends(require_user),
     ) -> dict[str, object]:
         _ = user
-        return finance_service.list_alerts(limit=limit).model_dump()
+        response = finance_service.list_alerts(limit=limit)
+        return {"alerts": [r.model_dump() for r in response.results], "count": response.count}
 
     @app.post("/finance/alerts/{alert_id}/resolve")
     def finance_alert_resolve(alert_id: str, user: str = Depends(require_user)) -> dict[str, object]:

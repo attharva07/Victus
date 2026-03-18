@@ -797,6 +797,7 @@ class FinanceService:
         return {
             "alerts": alerts,
             "guidance": guidance,
+            "recommendations": guidance,  # backward-compat alias
             "recurring_expenses": recurring,
             "behavior_insights": insights,
         }
@@ -958,10 +959,18 @@ def summary(
             limit=500,
         )
     ).results
+    # Resolve category IDs to names for backward compat
+    cat_name_cache: dict[str, str] = {}
+    if group_by == "category":
+        cat_ids = {item.category_id for item in items if item.category_id}
+        for cid in cat_ids:
+            cat = _FINANCE_SERVICE.repository.get_category(cid)
+            if cat:
+                cat_name_cache[cid] = cat.name
     totals: dict[str, int] = {}
     for item in items:
         if group_by == "category":
-            key = item.category_id
+            key = cat_name_cache.get(item.category_id, item.category_id) or "unknown"
         else:
             key = getattr(item, group_by, None) or "unknown"
         totals[key] = totals.get(key, 0) + item.amount_cents
