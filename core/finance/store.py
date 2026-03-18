@@ -1,3 +1,4 @@
+"""Legacy store functions — delegates to FinanceRepository for backward compatibility."""
 from __future__ import annotations
 
 import json
@@ -7,16 +8,17 @@ from core.storage.db import get_connection
 
 
 def _row_to_transaction(row: Any) -> dict[str, Any]:
+    keys = row.keys() if hasattr(row, "keys") else []
     return {
         "id": row["id"],
-        "ts": row["ts"],
+        "ts": row["ts"] if "ts" in keys else row.get("created_at", ""),
         "amount_cents": row["amount_cents"],
         "currency": row["currency"],
-        "category": row["category"],
+        "category": row["category_id"] if "category_id" in keys else row.get("category", ""),
         "merchant": row["merchant"],
-        "note": row["note"],
-        "method": row["method"],
-        "source": row["source"],
+        "note": row["notes"] if "notes" in keys else row.get("note", ""),
+        "method": row["payment_method"] if "payment_method" in keys else row.get("method", ""),
+        "source": row["source"] if "source" in keys else "",
     }
 
 
@@ -25,19 +27,24 @@ def add_transaction(record: dict[str, Any]) -> str:
         conn.execute(
             """
             INSERT INTO transactions (
-                id, ts, amount_cents, currency, category, merchant, note, method, source
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                id, ts, amount_cents, currency, category_id, merchant, notes, payment_method, source,
+                transaction_date, direction, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 record["id"],
                 record["ts"],
                 record["amount_cents"],
                 record["currency"],
-                record["category"],
-                record["merchant"],
-                record["note"],
-                record["method"],
-                record["source"],
+                record.get("category", record.get("category_id", "")),
+                record.get("merchant"),
+                record.get("note", record.get("notes")),
+                record.get("method", record.get("payment_method")),
+                record.get("source", ""),
+                record.get("transaction_date", record.get("ts", "")[:10]),
+                record.get("direction", "expense"),
+                record["ts"],
+                record["ts"],
             ),
         )
     return record["id"]
@@ -58,8 +65,8 @@ def list_transactions(
         sql += " AND ts <= ?"
         params.append(end_ts)
     if category:
-        sql += " AND category = ?"
-        params.append(category)
+        sql += " AND (category_id = ? OR category = ?)"
+        params.extend([category, category])
     sql += " ORDER BY ts DESC LIMIT ?"
     params.append(limit)
     with get_connection() as conn:
@@ -72,9 +79,9 @@ def summarize_transactions(
     end_ts: str | None,
     group_by: str,
 ) -> dict[str, int]:
-    if group_by not in {"category"}:
-        group_by = "category"
-    sql = f"SELECT {group_by} as key, SUM(amount_cents) as total FROM transactions WHERE 1=1"
+    allowed_columns = {"category_id": "category_id"}
+    column = allowed_columns.get(group_by, "category_id")
+    sql = f"SELECT {column} as key, SUM(amount_cents) as total FROM transactions WHERE 1=1"
     params: list[Any] = []
     if start_ts:
         sql += " AND ts >= ?"
@@ -82,7 +89,7 @@ def summarize_transactions(
     if end_ts:
         sql += " AND ts <= ?"
         params.append(end_ts)
-    sql += f" GROUP BY {group_by}"
+    sql += f" GROUP BY {column}"
     with get_connection() as conn:
         rows = conn.execute(sql, params).fetchall()
     return {row["key"]: row["total"] for row in rows if row["key"] is not None}
@@ -117,27 +124,27 @@ def add_alert(record: dict[str, Any]) -> None:
         conn.execute(
             """
             INSERT INTO finance_alerts (
-                id, severity, title, message, reason, entity_type, entity_id, suggested_next_step, ts, acked
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                id, type, severity, title, message, source_rule,
+                related_entity_type, related_entity_id, created_at, status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')
             """,
             (
                 record["id"],
+                record.get("type", ""),
                 record["severity"],
                 record["title"],
                 record["message"],
-                record["reason"],
-                record.get("entity_type"),
-                record.get("entity_id"),
-                record.get("suggested_next_step"),
-                record["ts"],
-                1 if record.get("acked", False) else 0,
+                record.get("source_rule", record.get("reason", "")),
+                record.get("related_entity_type", record.get("entity_type")),
+                record.get("related_entity_id", record.get("entity_id")),
+                record.get("created_at", record.get("ts", "")),
             ),
         )
 
 
 def list_alerts(limit: int = 100) -> list[dict[str, Any]]:
     with get_connection() as conn:
-        rows = conn.execute("SELECT * FROM finance_alerts ORDER BY ts DESC LIMIT ?", (limit,)).fetchall()
+        rows = conn.execute("SELECT * FROM finance_alerts ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
     return [dict(row) for row in rows]
 
 

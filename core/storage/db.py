@@ -19,6 +19,7 @@ def init_db() -> None:
         return
     conn = sqlite3.connect(str(db_path))
     try:
+        # -- Memory domain ---------------------------------------------------
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS memories (
@@ -36,56 +37,215 @@ def init_db() -> None:
         columns = {row[1] for row in conn.execute("PRAGMA table_info(memories)").fetchall()}
         if "sensitivity" not in columns:
             conn.execute("ALTER TABLE memories ADD COLUMN sensitivity TEXT DEFAULT 'internal'")
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS transactions (
-                id TEXT PRIMARY KEY,
-                ts TEXT,
-                transaction_date TEXT,
-                amount_cents INTEGER,
-                currency TEXT,
-                category TEXT,
-                merchant TEXT,
-                note TEXT,
-                account_id TEXT,
-                method TEXT,
-                source TEXT,
-                created_at TEXT,
-                updated_at TEXT
-            )
-            """
-        )
-        transaction_columns = {row[1] for row in conn.execute("PRAGMA table_info(transactions)").fetchall()}
-        if "transaction_date" not in transaction_columns:
-            conn.execute("ALTER TABLE transactions ADD COLUMN transaction_date TEXT")
-        if "account_id" not in transaction_columns:
-            conn.execute("ALTER TABLE transactions ADD COLUMN account_id TEXT")
-        if "created_at" not in transaction_columns:
-            conn.execute("ALTER TABLE transactions ADD COLUMN created_at TEXT")
-        if "updated_at" not in transaction_columns:
-            conn.execute("ALTER TABLE transactions ADD COLUMN updated_at TEXT")
+
+        # -- Finance domain: Accounts ----------------------------------------
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS finance_accounts (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
                 account_type TEXT NOT NULL,
+                currency TEXT NOT NULL DEFAULT 'USD',
                 institution TEXT,
                 is_active INTEGER NOT NULL DEFAULT 1,
-                created_at TEXT NOT NULL
-            )
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS finance_categories (
-                key TEXT PRIMARY KEY,
-                display_name TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )
             """
         )
+        _ensure_columns(conn, "finance_accounts", {
+            "currency": "TEXT NOT NULL DEFAULT 'USD'",
+            "updated_at": "TEXT NOT NULL DEFAULT ''",
+        })
+
+        # -- Finance domain: Categories --------------------------------------
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS finance_categories (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                type TEXT NOT NULL DEFAULT 'expense',
+                parent_category TEXT,
+                is_system INTEGER NOT NULL DEFAULT 0,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        _ensure_columns(conn, "finance_categories", {
+            "id": None,  # PK exists
+            "type": "TEXT NOT NULL DEFAULT 'expense'",
+            "parent_category": "TEXT",
+            "is_system": "INTEGER NOT NULL DEFAULT 0",
+            "is_active": "INTEGER NOT NULL DEFAULT 1",
+        })
+
+        # -- Finance domain: Transactions ------------------------------------
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS transactions (
+                id TEXT PRIMARY KEY,
+                ts TEXT,
+                amount_cents INTEGER NOT NULL,
+                currency TEXT NOT NULL DEFAULT 'USD',
+                merchant TEXT,
+                transaction_date TEXT,
+                category_id TEXT,
+                account_id TEXT,
+                direction TEXT NOT NULL DEFAULT 'expense',
+                payment_method TEXT,
+                notes TEXT,
+                source TEXT,
+                tags TEXT,
+                created_at TEXT,
+                updated_at TEXT
+            )
+            """
+        )
+        _ensure_columns(conn, "transactions", {
+            "transaction_date": "TEXT",
+            "account_id": "TEXT",
+            "direction": "TEXT NOT NULL DEFAULT 'expense'",
+            "payment_method": "TEXT",
+            "notes": "TEXT",
+            "tags": "TEXT",
+            "category_id": "TEXT",
+            "created_at": "TEXT",
+            "updated_at": "TEXT",
+        })
+
+        # -- Finance domain: Budgets -----------------------------------------
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS finance_budgets (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                category_id TEXT,
+                account_id TEXT,
+                amount_limit_cents INTEGER NOT NULL,
+                currency TEXT NOT NULL DEFAULT 'USD',
+                period TEXT NOT NULL DEFAULT 'monthly',
+                warning_threshold_percent INTEGER NOT NULL DEFAULT 80,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        _ensure_columns(conn, "finance_budgets", {
+            "name": "TEXT NOT NULL DEFAULT ''",
+            "category_id": "TEXT",
+            "account_id": "TEXT",
+            "amount_limit_cents": "INTEGER NOT NULL DEFAULT 0",
+            "currency": "TEXT NOT NULL DEFAULT 'USD'",
+            "period": "TEXT NOT NULL DEFAULT 'monthly'",
+            "warning_threshold_percent": "INTEGER NOT NULL DEFAULT 80",
+            "is_active": "INTEGER NOT NULL DEFAULT 1",
+            "created_at": "TEXT NOT NULL DEFAULT ''",
+        })
+
+        # -- Finance domain: Bills / Obligations -----------------------------
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS finance_bills (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                amount_expected_cents INTEGER,
+                currency TEXT NOT NULL DEFAULT 'USD',
+                due_date TEXT NOT NULL,
+                recurrence_rule TEXT,
+                category_id TEXT,
+                account_id TEXT,
+                status TEXT NOT NULL DEFAULT 'pending',
+                auto_reminder INTEGER NOT NULL DEFAULT 1,
+                notes TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+
+        # -- Finance domain: Savings Goals -----------------------------------
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS finance_savings_goals (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                target_amount_cents INTEGER NOT NULL,
+                currency TEXT NOT NULL DEFAULT 'USD',
+                target_date TEXT,
+                linked_account_id TEXT,
+                current_progress_cents INTEGER NOT NULL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'active',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        _ensure_columns(conn, "finance_savings_goals", {
+            "target_amount_cents": "INTEGER NOT NULL DEFAULT 0",
+            "currency": "TEXT NOT NULL DEFAULT 'USD'",
+            "linked_account_id": "TEXT",
+            "current_progress_cents": "INTEGER NOT NULL DEFAULT 0",
+            "status": "TEXT NOT NULL DEFAULT 'active'",
+            "created_at": "TEXT NOT NULL DEFAULT ''",
+        })
+
+        # -- Finance domain: Alerts ------------------------------------------
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS finance_alerts (
+                id TEXT PRIMARY KEY,
+                type TEXT NOT NULL,
+                severity TEXT NOT NULL,
+                title TEXT NOT NULL,
+                message TEXT NOT NULL,
+                source_rule TEXT NOT NULL,
+                related_entity_type TEXT,
+                related_entity_id TEXT,
+                created_at TEXT NOT NULL,
+                resolved_at TEXT,
+                status TEXT NOT NULL DEFAULT 'active'
+            )
+            """
+        )
+        _ensure_columns(conn, "finance_alerts", {
+            "type": "TEXT NOT NULL DEFAULT ''",
+            "source_rule": "TEXT NOT NULL DEFAULT ''",
+            "related_entity_type": "TEXT",
+            "related_entity_id": "TEXT",
+            "resolved_at": "TEXT",
+            "status": "TEXT NOT NULL DEFAULT 'active'",
+        })
+
+        # -- Finance domain: Behavior Logs -----------------------------------
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS finance_behavior_logs (
+                id TEXT PRIMARY KEY,
+                behavior_type TEXT NOT NULL,
+                score REAL NOT NULL,
+                details TEXT,
+                ts TEXT NOT NULL
+            )
+            """
+        )
+
+        # -- Finance domain: Rules -------------------------------------------
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS finance_rules (
+                id TEXT PRIMARY KEY,
+                rule_key TEXT NOT NULL UNIQUE,
+                threshold_value REAL NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+
+        # -- Legacy tables kept for backward compatibility -------------------
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS finance_cards (
@@ -104,36 +264,12 @@ def init_db() -> None:
         )
         conn.execute(
             """
-            CREATE TABLE IF NOT EXISTS finance_budgets (
-                id TEXT PRIMARY KEY,
-                month TEXT NOT NULL,
-                total_limit_cents INTEGER NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-            """
-        )
-        conn.execute(
-            """
             CREATE TABLE IF NOT EXISTS finance_budget_categories (
                 id TEXT PRIMARY KEY,
                 budget_id TEXT NOT NULL,
                 category TEXT NOT NULL,
                 limit_cents INTEGER NOT NULL,
                 warning_percent INTEGER NOT NULL DEFAULT 80
-            )
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS finance_savings_goals (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                target_cents INTEGER NOT NULL,
-                target_date TEXT,
-                monthly_contribution_cents INTEGER NOT NULL,
-                current_cents INTEGER NOT NULL DEFAULT 0,
-                is_emergency_fund INTEGER NOT NULL DEFAULT 0,
-                updated_at TEXT NOT NULL
             )
             """
         )
@@ -197,44 +333,8 @@ def init_db() -> None:
             )
             """
         )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS finance_alerts (
-                id TEXT PRIMARY KEY,
-                severity TEXT NOT NULL,
-                title TEXT NOT NULL,
-                message TEXT NOT NULL,
-                reason TEXT NOT NULL,
-                entity_type TEXT,
-                entity_id TEXT,
-                suggested_next_step TEXT,
-                ts TEXT NOT NULL,
-                acked INTEGER NOT NULL DEFAULT 0
-            )
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS finance_behavior_logs (
-                id TEXT PRIMARY KEY,
-                behavior_type TEXT NOT NULL,
-                score REAL NOT NULL,
-                details TEXT,
-                ts TEXT NOT NULL
-            )
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS finance_rules (
-                id TEXT PRIMARY KEY,
-                rule_key TEXT NOT NULL UNIQUE,
-                threshold_value REAL NOT NULL,
-                enabled INTEGER NOT NULL DEFAULT 1,
-                updated_at TEXT NOT NULL
-            )
-            """
-        )
+
+        # -- Auth domain -----------------------------------------------------
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS bootstrap_state (
@@ -251,6 +351,13 @@ def init_db() -> None:
         _DB_INITIALIZED.add(db_path)
     finally:
         conn.close()
+
+
+def _ensure_columns(conn: sqlite3.Connection, table_name: str, columns: dict[str, str | None]) -> None:
+    existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()}
+    for column_name, column_sql in columns.items():
+        if column_name not in existing and column_sql is not None:
+            conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_sql}")
 
 
 def get_connection() -> sqlite3.Connection:
