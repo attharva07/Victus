@@ -12,6 +12,9 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from core.finance.policy import FinanceNotFoundError, FinancePolicyError, FinanceValidationError
+from core.finance.schemas import AccountUpsert, SpendingSummaryRequest, TransactionUpdate, TransactionWrite
+
 from victus.ui_state import (
     DialogueSendRequest,
     UIState,
@@ -32,13 +35,19 @@ from core.filesystem.sandbox import FileSandboxError
 from core.filesystem.service import list_sandbox_files, read_sandbox_file, write_sandbox_file
 from core.finance.service import (
     add_transaction,
+    category_summary,
+    delete_transaction,
     generate_finance_brief,
     get_rule_thresholds,
+    get_transaction,
     list_alerts,
     list_behavior_logs,
     list_transactions,
     set_rule_threshold,
+    spending_summary,
     summary,
+    update_transaction,
+    upsert_account,
 )
 from core.logging.audit import audit_event, safe_excerpt, text_hash
 from core.logging.logger import get_logger
@@ -79,13 +88,16 @@ class MemoryAddRequest(BaseModel):
     sensitivity: str | None = None
 
 
-class FinanceAddRequest(BaseModel):
-    amount: float
-    currency: str = "USD"
-    category: str
-    merchant: str | None = None
-    note: str | None = None
-    method: str | None = None
+class FinanceAddRequest(TransactionWrite):
+    pass
+
+
+class FinanceUpdateRequest(TransactionUpdate):
+    pass
+
+
+class FinanceAccountRequest(AccountUpsert):
+    pass
 
 
 class FileWriteRequest(BaseModel):
@@ -131,7 +143,15 @@ def create_app() -> FastAPI:
     @app.exception_handler(Exception)
     async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
         err = sanitize_exception(exc)
-        return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content=err.to_response())
+        if isinstance(exc, FinanceValidationError):
+            status_code = status.HTTP_400_BAD_REQUEST
+        elif isinstance(exc, FinanceNotFoundError):
+            status_code = status.HTTP_404_NOT_FOUND
+        elif isinstance(exc, FinancePolicyError):
+            status_code = status.HTTP_403_FORBIDDEN
+        else:
+            status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+        return JSONResponse(status_code=status_code, content=err.to_response())
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],
@@ -293,27 +313,56 @@ def create_app() -> FastAPI:
         deleted = delete_memory(memory_id)
         return {"deleted": deleted}
 
+    @app.post("/finance/accounts")
+    def finance_account_upsert(payload: FinanceAccountRequest, user: str = Depends(require_user)) -> dict[str, object]:
+        _ = user
+        return upsert_account(**payload.model_dump())
+
     @app.post("/finance/add")
     def finance_add(payload: FinanceAddRequest, user: str = Depends(require_user)) -> dict[str, str]:
-        amount_cents = int(round(payload.amount * 100))
         transaction_id = add_transaction(
-            amount_cents=amount_cents,
+            amount_cents=payload.amount_cents,
             currency=payload.currency,
-            category=payload.category,
+            category=payload.category or "uncategorized",
             merchant=payload.merchant,
             note=payload.note,
             method=payload.method,
             source=user,
+            account_id=payload.account_id,
+            ts=payload.transaction_date.isoformat(),
         )
         return {"id": transaction_id}
+
+    @app.get("/finance/transactions/{transaction_id}")
+    def finance_get_transaction(transaction_id: str, user: str = Depends(require_user)) -> dict[str, object]:
+        _ = user
+        return {"transaction": get_transaction(transaction_id)}
+
+    @app.patch("/finance/transactions/{transaction_id}")
+    def finance_update_transaction(
+        transaction_id: str,
+        payload: FinanceUpdateRequest,
+        user: str = Depends(require_user),
+    ) -> dict[str, object]:
+        _ = user
+        return {"transaction": update_transaction(transaction_id, **payload.model_dump(exclude_unset=True))}
+
+    @app.delete("/finance/transactions/{transaction_id}")
+    def finance_delete_transaction(transaction_id: str, user: str = Depends(require_user)) -> dict[str, object]:
+        _ = user
+        return delete_transaction(transaction_id)
 
     @app.get("/finance/list")
     def finance_list(
         category: str | None = Query(default=None),
+        account_id: str | None = Query(default=None),
+        date_from: str | None = Query(default=None),
+        date_to: str | None = Query(default=None),
         limit: int = Query(default=50, ge=1, le=200),
         user: str = Depends(require_user),
     ) -> dict[str, object]:
-        results = list_transactions(category=category, limit=limit)
+        _ = user
+        results = list_transactions(start_ts=date_from, end_ts=date_to, category=category, account_id=account_id, limit=limit)
         return {"results": results}
 
     @app.get("/finance/summary")
@@ -321,10 +370,38 @@ def create_app() -> FastAPI:
         period: str = Query(default="week"),
         start_ts: str | None = Query(default=None),
         end_ts: str | None = Query(default=None),
+        account_id: str | None = Query(default=None),
         user: str = Depends(require_user),
     ) -> dict[str, object]:
+        _ = user
         report = summary(period=period, start_ts=start_ts, end_ts=end_ts, group_by="category")
+        if period == "custom" and start_ts and end_ts:
+            spending = spending_summary(start_ts[:10], end_ts[:10], account_id=account_id)
+            categories = category_summary(start_ts[:10], end_ts[:10], account_id=account_id)
+            return {"report": report, "spending": spending, "categories": categories}
         return {"report": report}
+
+    @app.get("/finance/spending-summary")
+    def finance_spending_summary(
+        date_from: str = Query(...),
+        date_to: str = Query(...),
+        account_id: str | None = Query(default=None),
+        user: str = Depends(require_user),
+    ) -> dict[str, object]:
+        _ = user
+        request = SpendingSummaryRequest(date_from=date_from, date_to=date_to, account_id=account_id)
+        return {"summary": spending_summary(request.date_from.isoformat(), request.date_to.isoformat(), request.account_id)}
+
+    @app.get("/finance/category-summary")
+    def finance_category_summary(
+        date_from: str = Query(...),
+        date_to: str = Query(...),
+        account_id: str | None = Query(default=None),
+        user: str = Depends(require_user),
+    ) -> dict[str, object]:
+        _ = user
+        request = SpendingSummaryRequest(date_from=date_from, date_to=date_to, account_id=account_id)
+        return {"summary": category_summary(request.date_from.isoformat(), request.date_to.isoformat(), request.account_id)}
 
     @app.post("/finance/intelligence/brief")
     def finance_intelligence_brief(

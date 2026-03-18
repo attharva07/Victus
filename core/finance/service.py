@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 from uuid import uuid4
 
 from core.finance import store
+from core.finance.audit import finance_audit
 from core.finance.intelligence import (
     DEFAULT_RULES,
     FinanceCognition,
@@ -13,8 +14,23 @@ from core.finance.intelligence import (
     FinanceRuleConfig,
     FinanceRuleEngine,
 )
-from core.logging.audit import audit_event
-
+from core.finance.policy import FinanceNotFoundError, FinanceValidationError, enforce_policy
+from core.finance.repository import FinanceRepository
+from core.finance.schemas import (
+    AccountResponse,
+    AccountUpsert,
+    CategorySummary,
+    LegacySummaryReport,
+    SpendingSummary,
+    SpendingSummaryRequest,
+    SummaryTotals,
+    TransactionListFilters,
+    TransactionRecord,
+    TransactionResponse,
+    TransactionUpdate,
+    TransactionWrite,
+    TransactionsResponse,
+)
 
 DEFAULT_RULE_THRESHOLDS: dict[str, float] = {
     "credit_utilization_caution": DEFAULT_RULES.credit_utilization_caution,
@@ -29,58 +45,194 @@ DEFAULT_RULE_THRESHOLDS: dict[str, float] = {
 }
 
 
-def add_transaction(
-    amount_cents: int,
-    currency: str = "USD",
-    category: str = "uncategorized",
-    merchant: str | None = None,
-    note: str | None = None,
-    method: str | None = None,
-    ts: str | None = None,
-    source: str = "user",
-) -> str:
-    ts_value = ts or datetime.now(tz=timezone.utc).isoformat()
-    transaction_id = str(uuid4())
-    record = {
-        "id": transaction_id,
-        "ts": ts_value,
-        "amount_cents": amount_cents,
-        "currency": currency,
-        "category": category,
-        "merchant": merchant,
-        "note": note,
-        "method": method,
-        "source": source,
-    }
-    store.add_transaction(record)
-    audit_event(
-        "finance_transaction_added",
-        transaction_id=transaction_id,
-        amount_cents=amount_cents,
-        currency=currency,
-        category=category,
-        merchant=merchant,
-        method=method,
-        source=source,
-    )
-    return transaction_id
+class LedgerCoreService:
+    def __init__(self, repository: FinanceRepository | None = None) -> None:
+        self.repository = repository or FinanceRepository()
+
+    def upsert_account(self, payload: AccountUpsert) -> AccountResponse:
+        enforce_policy("upsert_account")
+        account = self.repository.upsert_account(
+            account_id=payload.id,
+            name=payload.name,
+            account_type=payload.account_type,
+            institution=payload.institution,
+            is_active=payload.is_active,
+        )
+        finance_audit(
+            "finance_account_upserted",
+            account_id=account.id,
+            account_type=account.account_type,
+            institution=account.institution,
+            is_active=account.is_active,
+        )
+        return AccountResponse(account=account.__dict__)
+
+    def create_transaction(self, payload: TransactionWrite) -> TransactionResponse:
+        enforce_policy("create_transaction")
+        if payload.account_id and self.repository.get_account(payload.account_id) is None:
+            raise FinanceValidationError(f"Unknown account_id '{payload.account_id}'")
+        self.repository.create_or_get_category(payload.category)
+        now = _utc_now_iso()
+        record = {
+            "id": str(uuid4()),
+            "ts": now,
+            "transaction_date": payload.transaction_date.isoformat(),
+            "amount_cents": payload.amount_cents,
+            "currency": payload.currency,
+            "category": payload.category,
+            "merchant": payload.merchant,
+            "note": payload.note,
+            "account_id": payload.account_id,
+            "method": payload.method,
+            "source": payload.source,
+            "created_at": now,
+            "updated_at": now,
+        }
+        transaction = self.repository.create_transaction(record)
+        finance_audit(
+            "finance_transaction_created",
+            transaction_id=transaction.id,
+            amount_cents=transaction.amount_cents,
+            currency=transaction.currency,
+            category=transaction.category,
+            account_id=transaction.account_id,
+            merchant=transaction.merchant,
+            note=transaction.note,
+            method=transaction.method,
+            source=transaction.source,
+        )
+        return TransactionResponse(transaction=_to_transaction_record(transaction))
+
+    def get_transaction(self, transaction_id: str) -> TransactionResponse:
+        enforce_policy("get_transaction")
+        transaction = self.repository.get_transaction(transaction_id)
+        if transaction is None:
+            raise FinanceNotFoundError(f"Transaction '{transaction_id}' was not found")
+        finance_audit("finance_transaction_read", transaction_id=transaction_id)
+        return TransactionResponse(transaction=_to_transaction_record(transaction))
+
+    def update_transaction(self, transaction_id: str, payload: TransactionUpdate) -> TransactionResponse:
+        enforce_policy("update_transaction")
+        existing = self.repository.get_transaction(transaction_id)
+        if existing is None:
+            raise FinanceNotFoundError(f"Transaction '{transaction_id}' was not found")
+        if payload.account_id and self.repository.get_account(payload.account_id) is None:
+            raise FinanceValidationError(f"Unknown account_id '{payload.account_id}'")
+        updates: dict[str, Any] = {"updated_at": _utc_now_iso()}
+        if payload.amount is not None:
+            updates["amount_cents"] = payload.amount_cents
+        if payload.currency is not None:
+            updates["currency"] = payload.currency
+        if payload.category is not None:
+            self.repository.create_or_get_category(payload.category)
+            updates["category"] = payload.category
+        if "merchant" in payload.model_fields_set:
+            updates["merchant"] = payload.merchant
+        if "note" in payload.model_fields_set:
+            updates["note"] = payload.note
+        if "account_id" in payload.model_fields_set:
+            updates["account_id"] = payload.account_id
+        if "method" in payload.model_fields_set:
+            updates["method"] = payload.method
+        if payload.transaction_date is not None:
+            updates["transaction_date"] = payload.transaction_date.isoformat()
+        transaction = self.repository.update_transaction(transaction_id, updates)
+        if transaction is None:
+            raise FinanceNotFoundError(f"Transaction '{transaction_id}' was not found")
+        finance_audit(
+            "finance_transaction_updated",
+            transaction_id=transaction_id,
+            changed_fields=sorted(updates.keys()),
+            note=payload.note if "note" in payload.model_fields_set else None,
+        )
+        return TransactionResponse(transaction=_to_transaction_record(transaction))
+
+    def delete_transaction(self, transaction_id: str) -> dict[str, Any]:
+        enforce_policy("delete_transaction")
+        deleted = self.repository.delete_transaction(transaction_id)
+        finance_audit("finance_transaction_deleted", transaction_id=transaction_id, deleted=deleted)
+        if not deleted:
+            raise FinanceNotFoundError(f"Transaction '{transaction_id}' was not found")
+        return {"deleted": True, "transaction_id": transaction_id}
+
+    def list_transactions(self, filters: TransactionListFilters) -> TransactionsResponse:
+        enforce_policy("list_transactions")
+        results = self.repository.list_transactions(
+            date_from=filters.date_from.isoformat() if isinstance(filters.date_from, date) else None,
+            date_to=filters.date_to.isoformat() if isinstance(filters.date_to, date) else None,
+            category=filters.category,
+            account_id=filters.account_id,
+            limit=filters.limit,
+        )
+        finance_audit(
+            "finance_transactions_listed",
+            date_from=filters.date_from.isoformat() if isinstance(filters.date_from, date) else None,
+            date_to=filters.date_to.isoformat() if isinstance(filters.date_to, date) else None,
+            category=filters.category,
+            account_id=filters.account_id,
+            limit=filters.limit,
+            result_count=len(results),
+        )
+        return TransactionsResponse(results=[_to_transaction_record(item) for item in results], count=len(results))
+
+    def spending_summary(self, request: SpendingSummaryRequest) -> SpendingSummary:
+        enforce_policy("spending_summary")
+        snapshot = self.repository.summarize_spending(
+            date_from=request.date_from.isoformat(),
+            date_to=request.date_to.isoformat(),
+            account_id=request.account_id,
+        )
+        currency = snapshot["transactions"][0].currency if snapshot["transactions"] else "USD"
+        response = SpendingSummary(
+            date_from=request.date_from.isoformat(),
+            date_to=request.date_to.isoformat(),
+            account_id=request.account_id,
+            totals=SummaryTotals(
+                currency=currency,
+                income_cents=snapshot["income_cents"],
+                expense_cents=snapshot["expense_cents"],
+                net_cents=snapshot["net_cents"],
+                transaction_count=len(snapshot["transactions"]),
+            ),
+            by_category=snapshot["by_category"],
+            by_account=snapshot["by_account"],
+        )
+        finance_audit(
+            "finance_spending_summary_generated",
+            date_from=response.date_from,
+            date_to=response.date_to,
+            account_id=response.account_id,
+            expense_cents=response.totals.expense_cents,
+        )
+        return response
+
+    def category_summary(self, request: SpendingSummaryRequest) -> CategorySummary:
+        enforce_policy("category_summary")
+        spending = self.spending_summary(request)
+        categories = [
+            {"category": category, "expense_cents": amount}
+            for category, amount in sorted(spending.by_category.items(), key=lambda item: (-item[1], item[0]))
+        ]
+        finance_audit(
+            "finance_category_summary_generated",
+            date_from=spending.date_from,
+            date_to=spending.date_to,
+            account_id=spending.account_id,
+            category_count=len(categories),
+        )
+        return CategorySummary(
+            date_from=spending.date_from,
+            date_to=spending.date_to,
+            account_id=spending.account_id,
+            categories=categories,
+        )
 
 
-def list_transactions(
-    start_ts: str | None = None,
-    end_ts: str | None = None,
-    category: str | None = None,
-    limit: int = 50,
-) -> list[dict[str, Any]]:
-    results = store.list_transactions(start_ts, end_ts, category, limit)
-    audit_event(
-        "finance_transactions_listed",
-        start_ts=start_ts,
-        end_ts=end_ts,
-        category=category,
-        limit=limit,
-    )
-    return results
+_LEDGER_SERVICE = LedgerCoreService()
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(tz=timezone.utc).isoformat()
 
 
 def _period_bounds(period: str, start_ts: str | None, end_ts: str | None) -> tuple[str | None, str | None]:
@@ -94,25 +246,6 @@ def _period_bounds(period: str, start_ts: str | None, end_ts: str | None) -> tup
     if period == "custom":
         return start_ts, end_ts
     return None, None
-
-
-def summary(
-    period: str = "week",
-    start_ts: str | None = None,
-    end_ts: str | None = None,
-    group_by: str = "category",
-) -> dict[str, Any]:
-    start, end = _period_bounds(period, start_ts, end_ts)
-    totals = store.summarize_transactions(start, end, group_by)
-    report = {"period": period, "start_ts": start, "end_ts": end, "group_by": group_by, "totals": totals}
-    audit_event(
-        "finance_summary_requested",
-        period=period,
-        start_ts=start,
-        end_ts=end,
-        group_by=group_by,
-    )
-    return report
 
 
 def _load_rule_config() -> FinanceRuleConfig:
@@ -134,11 +267,126 @@ def _load_rule_config() -> FinanceRuleConfig:
     )
 
 
+# Backward-compatible entry points used by current app/orchestrator code.
+def add_transaction(
+    amount_cents: int,
+    currency: str = "USD",
+    category: str = "uncategorized",
+    merchant: str | None = None,
+    note: str | None = None,
+    method: str | None = None,
+    ts: str | None = None,
+    source: str = "user",
+    account_id: str | None = None,
+) -> str:
+    transaction_date = _coerce_ts_to_date(ts)
+    response = _LEDGER_SERVICE.create_transaction(
+        TransactionWrite(
+            amount=amount_cents / 100,
+            currency=currency,
+            category=category,
+            merchant=merchant,
+            note=note,
+            method=method,
+            source=source,
+            account_id=account_id,
+            transaction_date=transaction_date,
+        )
+    )
+    return response.transaction.id
+
+
+def get_transaction(transaction_id: str) -> dict[str, Any]:
+    return _LEDGER_SERVICE.get_transaction(transaction_id).model_dump()["transaction"]
+
+
+def update_transaction(transaction_id: str, **updates: Any) -> dict[str, Any]:
+    payload = TransactionUpdate(**updates)
+    return _LEDGER_SERVICE.update_transaction(transaction_id, payload).model_dump()["transaction"]
+
+
+def delete_transaction(transaction_id: str) -> dict[str, Any]:
+    return _LEDGER_SERVICE.delete_transaction(transaction_id)
+
+
+def upsert_account(**kwargs: Any) -> dict[str, Any]:
+    response = _LEDGER_SERVICE.upsert_account(AccountUpsert(**kwargs))
+    return response.model_dump()["account"]
+
+
+def list_transactions(
+    start_ts: str | None = None,
+    end_ts: str | None = None,
+    category: str | None = None,
+    limit: int = 50,
+    account_id: str | None = None,
+) -> list[dict[str, Any]]:
+    filters = TransactionListFilters(
+        date_from=_coerce_ts_to_date(start_ts) if start_ts else None,
+        date_to=_coerce_ts_to_date(end_ts) if end_ts else None,
+        category=category,
+        account_id=account_id,
+        limit=limit,
+    )
+    return _LEDGER_SERVICE.list_transactions(filters).model_dump()["results"]
+
+
+def spending_summary(date_from: str, date_to: str, account_id: str | None = None) -> dict[str, Any]:
+    request = SpendingSummaryRequest(date_from=date_from, date_to=date_to, account_id=account_id)
+    return _LEDGER_SERVICE.spending_summary(request).model_dump()
+
+
+def category_summary(date_from: str, date_to: str, account_id: str | None = None) -> dict[str, Any]:
+    request = SpendingSummaryRequest(date_from=date_from, date_to=date_to, account_id=account_id)
+    return _LEDGER_SERVICE.category_summary(request).model_dump()
+
+
+def summary(
+    period: str = "week",
+    start_ts: str | None = None,
+    end_ts: str | None = None,
+    group_by: str = "category",
+) -> dict[str, Any]:
+    start, end = _period_bounds(period, start_ts, end_ts)
+    if start is None or end is None:
+        raise FinanceValidationError(f"Unsupported period '{period}'")
+    items = _LEDGER_SERVICE.list_transactions(
+        TransactionListFilters(
+            date_from=_coerce_ts_to_date(start),
+            date_to=_coerce_ts_to_date(end),
+            limit=500,
+        )
+    ).results
+    totals: dict[str, int] = {}
+    for item in items:
+        if group_by == "category":
+            key = item.category
+        else:
+            key = getattr(item, group_by, None) or "unknown"
+        totals[key] = totals.get(key, 0) + item.amount_cents
+    report = LegacySummaryReport(
+        period=period,
+        start_ts=start,
+        end_ts=end,
+        group_by=group_by,
+        totals=totals,
+    )
+    finance_audit(
+        "finance_summary_requested",
+        period=period,
+        start_ts=start,
+        end_ts=end,
+        group_by=group_by,
+    )
+    return report.model_dump()
+
+
 def set_rule_threshold(rule_key: str, threshold_value: float, enabled: bool = True) -> dict[str, Any]:
     if rule_key not in DEFAULT_RULE_THRESHOLDS:
         raise ValueError(f"Unsupported rule '{rule_key}'")
-    updated_at = datetime.now(tz=timezone.utc).isoformat()
+    updated_at = _utc_now_iso()
     store.upsert_rule(rule_key, threshold_value, enabled, updated_at)
+    finance_audit("finance_rule_threshold_set", rule_key=rule_key, threshold_value=threshold_value, enabled=enabled)
     return {"rule_key": rule_key, "threshold_value": threshold_value, "enabled": enabled, "updated_at": updated_at}
 
 
@@ -189,11 +437,11 @@ def generate_finance_brief(snapshot: dict[str, Any], now: datetime | None = None
                 "behavior_type": insight["pattern"],
                 "score": float(insight["score"]),
                 "details": insight,
-                "ts": datetime.now(tz=timezone.utc).isoformat(),
+                "ts": _utc_now_iso(),
             }
         )
 
-    audit_event(
+    finance_audit(
         "finance_intelligence_brief_generated",
         alert_count=len(alerts),
         recommendation_count=len(recommendations),
@@ -216,3 +464,23 @@ def list_alerts(limit: int = 100) -> list[dict[str, Any]]:
 
 def list_behavior_logs(limit: int = 100) -> list[dict[str, Any]]:
     return store.list_behavior_logs(limit=limit)
+
+
+def _to_transaction_record(item: Any) -> TransactionRecord:
+    return TransactionRecord(**item.__dict__)
+
+
+def _coerce_ts_to_date(value: str | None) -> str:
+    if not value:
+        return datetime.now(tz=timezone.utc).date().isoformat()
+    candidate = str(value)
+    if len(candidate) >= 10:
+        try:
+            return datetime.fromisoformat(candidate.replace("Z", "+00:00")).date().isoformat()
+        except ValueError:
+            pass
+        try:
+            return date.fromisoformat(candidate[:10]).isoformat()
+        except ValueError as exc:
+            raise FinanceValidationError(f"Invalid timestamp/date '{value}'") from exc
+    raise FinanceValidationError(f"Invalid timestamp/date '{value}'")
