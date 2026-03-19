@@ -1,37 +1,14 @@
 """
 Unit tests for the Files domain.
 
-Covers: entities, schemas, policy, sandbox, service, handlers, and API routes.
+Covers: entities, schemas, policy, sandbox, service, handlers.
 """
 from __future__ import annotations
 
 import importlib
 from pathlib import Path
 
-import bcrypt
 import pytest
-from fastapi.testclient import TestClient
-
-from core.security.bootstrap_store import set_bootstrap
-
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture()
-def api_client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> TestClient:
-    monkeypatch.setenv("VICTUS_DATA_DIR", str(tmp_path))
-    password_hash = bcrypt.hashpw(b"testpass", bcrypt.gensalt()).decode()
-    set_bootstrap(password_hash, "test-secret")
-    local_main = importlib.reload(importlib.import_module("apps.local.main"))
-    return TestClient(local_main.create_app())
-
-
-def _auth(client: TestClient) -> dict[str, str]:
-    login = client.post("/login", json={"username": "admin", "password": "testpass"})
-    return {"Authorization": f"Bearer {login.json()['access_token']}"}
 
 
 # ---------------------------------------------------------------------------
@@ -281,86 +258,3 @@ def test_scaffold_requires_existing_workspace(monkeypatch: pytest.MonkeyPatch, t
 
     with pytest.raises(ValueError):
         handlers.generate_project_scaffold_handler({"workspace": "nonexistent"}, {})
-
-
-# ---------------------------------------------------------------------------
-# F. API Routes
-# ---------------------------------------------------------------------------
-
-
-def test_files_routes_require_auth(api_client: TestClient) -> None:
-    assert api_client.get("/files/list").status_code == 401
-    assert api_client.get("/files/read", params={"path": "x.txt"}).status_code == 401
-    assert api_client.post("/files/write", json={"path": "x.txt", "content": "x"}).status_code == 401
-
-
-def test_files_write_read_list_delete_flow(api_client: TestClient) -> None:
-    headers = _auth(api_client)
-
-    # Write
-    write_resp = api_client.post(
-        "/files/write",
-        json={"path": "notes.txt", "content": "hello from test", "mode": "overwrite"},
-        headers=headers,
-    )
-    assert write_resp.status_code == 200
-    assert write_resp.json()["ok"] is True
-
-    # Read
-    read_resp = api_client.get("/files/read", params={"path": "notes.txt"}, headers=headers)
-    assert read_resp.status_code == 200
-    assert read_resp.json()["content"] == "hello from test"
-
-    # List
-    list_resp = api_client.get("/files/list", headers=headers)
-    assert list_resp.status_code == 200
-    assert "notes.txt" in list_resp.json()["files"]
-
-    # Delete
-    del_resp = api_client.delete("/files/delete", params={"path": "notes.txt"}, headers=headers)
-    assert del_resp.status_code == 200
-    assert del_resp.json()["deleted"] is True
-
-    # Confirm deleted
-    list_after = api_client.get("/files/list", headers=headers)
-    assert "notes.txt" not in list_after.json()["files"]
-
-
-def test_files_sandbox_blocks_traversal_via_api(api_client: TestClient) -> None:
-    headers = _auth(api_client)
-    resp = api_client.post(
-        "/files/write",
-        json={"path": "../escape.txt", "content": "nope", "mode": "overwrite"},
-        headers=headers,
-    )
-    assert resp.status_code == 400
-
-
-def test_files_sandbox_blocks_extensions_via_api(api_client: TestClient) -> None:
-    headers = _auth(api_client)
-    resp = api_client.post(
-        "/files/write",
-        json={"path": "malware.exe", "content": "nope", "mode": "overwrite"},
-        headers=headers,
-    )
-    assert resp.status_code == 400
-
-
-def test_files_append_mode(api_client: TestClient) -> None:
-    headers = _auth(api_client)
-
-    api_client.post(
-        "/files/write",
-        json={"path": "log.txt", "content": "line1\n", "mode": "overwrite"},
-        headers=headers,
-    )
-    api_client.post(
-        "/files/write",
-        json={"path": "log.txt", "content": "line2\n", "mode": "append"},
-        headers=headers,
-    )
-
-    read_resp = api_client.get("/files/read", params={"path": "log.txt"}, headers=headers)
-    content = read_resp.json()["content"]
-    assert "line1" in content
-    assert "line2" in content

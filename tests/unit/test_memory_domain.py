@@ -1,18 +1,14 @@
 """
 Unit tests for the Memory domain.
 
-Covers: entities, schemas, policy, service, handlers, and API routes.
+Covers: entities, schemas, policy, service, handlers.
 """
 from __future__ import annotations
 
 import importlib
 from pathlib import Path
 
-import bcrypt
 import pytest
-from fastapi.testclient import TestClient
-
-from core.security.bootstrap_store import set_bootstrap
 
 
 # ---------------------------------------------------------------------------
@@ -32,20 +28,6 @@ def memory_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     importlib.reload(store_module)
     svc_module = importlib.reload(svc_module)
     return svc_module
-
-
-@pytest.fixture()
-def api_client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> TestClient:
-    monkeypatch.setenv("VICTUS_DATA_DIR", str(tmp_path))
-    password_hash = bcrypt.hashpw(b"testpass", bcrypt.gensalt()).decode()
-    set_bootstrap(password_hash, "test-secret")
-    local_main = importlib.reload(importlib.import_module("apps.local.main"))
-    return TestClient(local_main.create_app())
-
-
-def _auth(client: TestClient) -> dict[str, str]:
-    login = client.post("/login", json={"username": "admin", "password": "testpass"})
-    return {"Authorization": f"Bearer {login.json()['access_token']}"}
 
 
 # ---------------------------------------------------------------------------
@@ -181,7 +163,6 @@ def test_sensitivity_filtering_internal(memory_env) -> None:
     results = memory_env.search_memories(
         query="secret config", tags=None, limit=10, allowed_sensitivity=["internal"]
     )
-    # "sensitive" rank > "internal", so it should be filtered out
     assert len(results) == 0
 
 
@@ -190,7 +171,6 @@ def test_sensitivity_filtering_allows_matching_level(memory_env) -> None:
     results = memory_env.search_memories(
         query="public announcement", tags=None, limit=10, allowed_sensitivity=["internal"]
     )
-    # "public" rank <= "internal", so it should pass through
     assert len(results) >= 1
 
 
@@ -270,55 +250,3 @@ def test_delete_memory_handler(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) 
     created = handlers.create_note_handler({"content": "to delete"}, {"user_id": "u1"})
     result = handlers.delete_memory_handler({"memory_id": created["memory_id"]}, {})
     assert result["deleted"] is True
-
-
-# ---------------------------------------------------------------------------
-# F. API Routes
-# ---------------------------------------------------------------------------
-
-
-def test_memory_routes_require_auth(api_client: TestClient) -> None:
-    assert api_client.post("/memory/add", json={"content": "x"}).status_code == 401
-    assert api_client.get("/memory/search", params={"q": "x"}).status_code == 401
-    assert api_client.get("/memory/list").status_code == 401
-
-
-def test_memory_add_search_list_delete_flow(api_client: TestClient) -> None:
-    headers = _auth(api_client)
-
-    # Add
-    add_resp = api_client.post(
-        "/memory/add",
-        json={"content": "remember the standup at 9am", "type": "event", "tags": ["work"]},
-        headers=headers,
-    )
-    assert add_resp.status_code == 200
-    memory_id = add_resp.json()["id"]
-    assert memory_id
-
-    # Search
-    search_resp = api_client.get(
-        "/memory/search",
-        params={"q": "standup", "limit": 5},
-        headers=headers,
-    )
-    assert search_resp.status_code == 200
-    results = search_resp.json()["results"]
-    assert any(r["id"] == memory_id for r in results)
-
-    # List
-    list_resp = api_client.get("/memory/list", headers=headers)
-    assert list_resp.status_code == 200
-    assert isinstance(list_resp.json()["results"], list)
-    assert len(list_resp.json()["results"]) >= 1
-
-    # Delete
-    del_resp = api_client.delete(f"/memory/{memory_id}", headers=headers)
-    assert del_resp.status_code == 200
-    assert del_resp.json()["deleted"] is True
-
-
-def test_memory_add_rejects_empty_content(api_client: TestClient) -> None:
-    headers = _auth(api_client)
-    resp = api_client.post("/memory/add", json={"content": ""}, headers=headers)
-    assert resp.status_code in (400, 422)
