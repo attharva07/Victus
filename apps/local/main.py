@@ -47,7 +47,7 @@ from core.camera.models import CameraStatus, CaptureResponse, RecognizeResponse
 from core.camera.service import CameraService
 from core.config import ensure_directories, get_orchestrator_config
 from core.filesystem.sandbox import FileSandboxError
-from core.filesystem.service import list_sandbox_files, read_sandbox_file, write_sandbox_file
+from core.filesystem.service import delete_sandbox_file, list_sandbox_files, read_sandbox_file, write_sandbox_file
 from core.finance.service import (
     FinanceService,
     add_transaction,
@@ -304,15 +304,18 @@ def create_app() -> FastAPI:
 
     @app.post("/memory/add")
     def memory_add(payload: MemoryAddRequest, user: str = Depends(require_user)) -> dict[str, str]:
-        memory_id = add_memory(
-            content=payload.content,
-            type=payload.type,
-            tags=payload.tags,
-            source=user,
-            importance=payload.importance,
-            confidence=payload.confidence,
-            sensitivity=payload.sensitivity,
-        )
+        try:
+            memory_id = add_memory(
+                content=payload.content,
+                type=payload.type,
+                tags=payload.tags,
+                source=user,
+                importance=payload.importance,
+                confidence=payload.confidence,
+                sensitivity=payload.sensitivity,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
         return {"id": memory_id}
 
     @app.get("/memory/search")
@@ -704,6 +707,14 @@ def create_app() -> FastAPI:
         except FileSandboxError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=VictusError(str(exc)).user_message()) from exc
         return {"ok": True}
+
+    @app.delete("/files/delete")
+    def files_delete(path: str = Query(...), user: str = Depends(require_user)) -> dict[str, object]:
+        try:
+            deleted = delete_sandbox_file(path)
+        except FileSandboxError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=VictusError(str(exc)).user_message()) from exc
+        return {"deleted": deleted, "path": path}
 
     # -----------------------------------------------------------------------
     # Camera
