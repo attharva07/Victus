@@ -10,6 +10,9 @@ from core.camera.service import CameraService
 from core.config import get_orchestrator_config, get_security_config
 from core.filesystem.service import list_sandbox_files, read_sandbox_file, write_sandbox_file
 from core.finance.service import add_transaction, list_transactions, summary
+from core.language import realizer as language_realizer
+from core.language import service as language_service
+from core.language.chat import is_smalltalk as language_is_smalltalk
 from core.logging.audit import audit_event, safe_excerpt, text_hash
 from core.memory.service import add_memory, delete_memory, list_recent, search_memories
 from core.orchestrator.deterministic import parse_intent
@@ -32,6 +35,10 @@ _ALLOWED_ACTIONS = [
     "memory.search",
     "memory.list",
     "memory.delete",
+    "fact.remember",
+    "fact.ask",
+    "fact.forget",
+    "fact.suggest",
     "finance.add_transaction",
     "finance.list_transactions",
     "finance.summary",
@@ -120,11 +127,31 @@ def _tool_memory_delete(params: dict[str, object]) -> tuple[str, dict[str, objec
     return ("Memory deleted." if deleted else "Memory not found."), {"deleted": deleted}
 
 
+def _tool_fact_remember(params: dict[str, object]) -> tuple[str, dict[str, object]]:
+    return language_service.remember(str(params["text"]))
+
+
+def _tool_fact_ask(params: dict[str, object]) -> tuple[str, dict[str, object]]:
+    return language_service.ask(str(params["text"]))
+
+
+def _tool_fact_forget(params: dict[str, object]) -> tuple[str, dict[str, object]]:
+    return language_service.forget(str(params["text"]))
+
+
+def _tool_fact_suggest(params: dict[str, object]) -> tuple[str, dict[str, object]]:
+    return language_service.suggest(str(params["text"]))
+
+
 _TOOL_REGISTRY: dict[str, Callable[[dict[str, object]], tuple[str, dict[str, object]]]] = {
     "memory.add": _tool_memory_add,
     "memory.search": _tool_memory_search,
     "memory.list": _tool_memory_list,
     "memory.delete": _tool_memory_delete,
+    "fact.remember": _tool_fact_remember,
+    "fact.ask": _tool_fact_ask,
+    "fact.forget": _tool_fact_forget,
+    "fact.suggest": _tool_fact_suggest,
 }
 
 
@@ -417,8 +444,18 @@ def route_intent(
 
         tool_domains = _tool_domains_in_text(text)
         if not tool_domains:
+            if language_is_smalltalk(text):
+                decision_path.append("deterministic:smalltalk")
+                return OrchestrateResponse(
+                    intent=Intent(action="chat.reply", parameters={}, confidence=1.0),
+                    message=language_realizer.greeting(text),
+                    actions=[],
+                    mode="deterministic",
+                    executed=True,
+                    result=_response_result([], _trace("deterministic")),
+                )
             decision_path.append("deterministic:noop_non_tool")
-            return _noop_response("Please ask for a supported tool action (memory, finance, files, or camera).", _trace("deterministic"))
+            return _noop_response(language_realizer.help_text(), _trace("deterministic"))
 
         if deterministic_intent is None and not config.enable_llm_fallback:
             decision_path.append("deterministic:no_match")

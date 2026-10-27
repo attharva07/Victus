@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 from typing import Optional
 
+from core.language.intents import classify as classify_language_intent
 from core.orchestrator.policy import _ALLOWED_ACTIONS
 from core.orchestrator.schemas import Intent
 from victus.core.confidence import ConfidenceCore, ConfidenceStore, make_key
@@ -19,6 +20,10 @@ _PAYLOAD_FIELD_BY_ACTION: dict[str, str] = {
     "memory.search": "query",
     "memory.delete": "id",
     "files.read": "path",
+    "fact.remember": "text",
+    "fact.ask": "text",
+    "fact.forget": "text",
+    "fact.suggest": "text",
 }
 
 
@@ -199,8 +204,18 @@ def parse_camera_intent(utterance: str) -> Optional[Intent]:
     return None
 
 
+def parse_fact_intent(utterance: str) -> Optional[Intent]:
+    """Language-layer intents. Returns None unless the text fits the fact grammar, so
+    anything else falls through to the older notes/finance/files parsers unchanged."""
+    intent = classify_language_intent(utterance)
+    if intent is None:
+        return None
+    return Intent(action=intent.action, parameters={"text": intent.text}, confidence=1.0)
+
+
 _DOMAIN_PARSERS = (
     ("camera", parse_camera_intent),
+    ("facts", parse_fact_intent),
     ("memories", parse_memory_intent),
     ("finance", parse_finance_intent),
     ("files", parse_files_intent),
