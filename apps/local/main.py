@@ -65,6 +65,7 @@ from core.finance.service import (
     update_transaction,
     upsert_account,
 )
+from core.language.chat import reply as language_reply
 from core.logging.audit import audit_event, safe_excerpt, text_hash
 from core.logging.logger import get_logger
 from core.memory.service import add_memory, delete_memory, list_recent, search_memories
@@ -93,6 +94,15 @@ class BootstrapInitResponse(BaseModel):
 class LoginResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
+
+
+class ChatRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=1000)
+
+
+class ChatResponse(BaseModel):
+    reply: str
+    action: str | None = None
 
 
 class MemoryAddRequest(BaseModel):
@@ -262,6 +272,18 @@ def create_app() -> FastAPI:
     @app.get("/me")
     def me(user: str = Depends(require_user)) -> dict[str, str]:
         return {"username": user}
+
+    @app.post("/chat", response_model=ChatResponse)
+    def chat(payload: ChatRequest, user: str = Depends(require_user)) -> ChatResponse:
+        """LLM-free conversation: remember and recall facts. Language layer only, no tools."""
+        audit_event(
+            "chat_requested",
+            username=user,
+            text_hash=text_hash(payload.message),
+            text_excerpt=safe_excerpt(payload.message),
+        )
+        result = language_reply(payload.message)
+        return ChatResponse(reply=result.message, action=result.action)
 
     @app.get("/debug/orchestrator")
     def debug_orchestrator(user: str = Depends(require_user)) -> dict[str, object]:
