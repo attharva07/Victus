@@ -38,6 +38,26 @@ def init_db() -> None:
         if "sensitivity" not in columns:
             conn.execute("ALTER TABLE memories ADD COLUMN sensitivity TEXT DEFAULT 'internal'")
 
+        # -- Language layer: typed facts -------------------------------------
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS facts (
+                id TEXT PRIMARY KEY,
+                subject_key TEXT NOT NULL,
+                subject_text TEXT NOT NULL,
+                relation TEXT NOT NULL,
+                object_key TEXT NOT NULL,
+                object_text TEXT NOT NULL,
+                polarity INTEGER NOT NULL DEFAULT 1,
+                copula TEXT NOT NULL DEFAULT 'is',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE (subject_key, relation, object_key)
+            )
+            """
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_facts_subject ON facts (subject_key)")
+
         # -- Finance domain: Accounts ----------------------------------------
         conn.execute(
             """
